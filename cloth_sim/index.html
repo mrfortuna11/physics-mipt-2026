@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloth — Hitman / PBD / XPBD</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="panel">
+  <h2>Cloth Simulation</h2>
+
+  <div class="row"><label>Solver</label></div>
+  <select id="solver">
+    <option value="JAK">Hitman</option>
+    <option value="PBD">PBD</option>
+    <option value="XPBD" selected>XPBD</option>
+    <option value="PD">Projective Dynamics</option>
+  </select>
+
+  <div class="row" style="margin-top:6px"><label>Scene</label></div>
+  <select id="scene">
+    <option value="hang">1. Hanging</option>
+    <option value="fall">2. Falling on floor</option>
+    <option value="stretch">3. Overstretched</option>
+    <option value="ball">4. Rigid ball</option>
+  </select>
+
+  <hr>
+
+  <div class="row"><label>Iterations</label><input type="range" id="iters" min="1" max="40" value="8"><span class="val" id="itersVal">8</span></div>
+  <div class="row"><label>Substeps</label><input type="range" id="subs" min="1" max="10" value="1"><span class="val" id="subsVal">1</span></div>
+  <div class="row"><label>Stiffness (PBD/Hitman)</label><input type="range" id="stiff" min="0" max="1" step="0.01" value="1"><span class="val" id="stiffVal">1.00</span></div>
+  <div class="row"><label>Compliance (XPBD)</label><input type="range" id="comp" min="0" max="0.01" step="0.00005" value="0"><span class="val" id="compVal">0.0000</span></div>
+  <div class="row"><label>PD spring weight</label><input type="range" id="pdW" min="1" max="2000" step="1" value="200"><span class="val" id="pdWVal">200</span></div>
+  <div class="row"><label>Friction</label><input type="range" id="fric" min="0" max="1" step="0.01" value="0.3"><span class="val" id="fricVal">0.30</span></div>
+  <div class="row"><label>Restitution</label><input type="range" id="rest" min="0" max="1" step="0.01" value="0.15"><span class="val" id="restVal">0.15</span></div>
+  <div class="row"><label>Damping</label><input type="range" id="damp" min="0" max="2" step="0.01" value="0.05"><span class="val" id="dampVal">0.05</span></div>
+  <div class="row"><label>Gravity</label><input type="range" id="grav" min="0" max="30" step="0.1" value="9.8"><span class="val" id="gravVal">9.8</span></div>
+  <div class="row"><label>Particle radius</label><input type="range" id="prad" min="0.02" max="0.12" step="0.005" value="0.05"><span class="val" id="pradVal">0.05</span></div>
+
+  <hr>
+  <div class="row chk"><input type="checkbox" id="selfColl" checked><label for="selfColl">Self collisions (spheres)</label></div>
+  <div class="row chk"><input type="checkbox" id="showEdges"><label for="showEdges">Show constraint edges</label></div>
+  <div class="row chk"><input type="checkbox" id="showPts"><label for="showPts">Show collision spheres</label></div>
+
+  <button id="restart">Restart scene</button>
+  <button id="pauseBtn">Pause</button>
+</div>
+
+<div id="info">
+  <div><b>Left-drag</b> grab point · <b>Right-drag</b> orbit · <b>Wheel</b> zoom</div>
+  <div id="stats">—</div>
+</div>
+
+<!-- Three.js library -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<!-- App scripts: order matters! sim/render first, then everything that uses them, main last -->
+<script src="js/sim.js"></script>
+<script src="js/pd_solver.js"></script>
+<script src="js/render.js"></script>
+<script src="js/scenes.js"></script>
+<script src="js/controls.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

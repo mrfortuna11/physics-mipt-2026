@@ -1,0 +1,27 @@
+html, body { margin: 0; padding: 0; height: 100%; background: #1a1a1f; color: #ddd;
+  font-family: -apple-system, Segoe UI, sans-serif; overflow: hidden; }
+#c { display: block; width: 100vw; height: 100vh; }
+#panel {
+  position: absolute; top: 10px; left: 10px; width: 280px;
+  background: rgba(20,20,28,0.88); border: 1px solid #333; border-radius: 8px;
+  padding: 12px 14px; font-size: 12px; backdrop-filter: blur(6px);
+}
+#panel h2 { margin: 0 0 8px 0; font-size: 13px; color: #8ab4f8; }
+#panel .row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0; gap: 6px; }
+#panel label { color: #aaa; flex: 1; }
+#panel .val { color: #fff; width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+#panel input[type=range] { flex: 1.2; accent-color: #8ab4f8; }
+#panel select, #panel button {
+  background: #2a2a34; color: #eee; border: 1px solid #444; border-radius: 4px;
+  padding: 5px 8px; font-size: 12px; cursor: pointer; width: 100%;
+}
+#panel button { margin-top: 4px; }
+#panel button:hover { background: #353544; }
+#panel hr { border: none; border-top: 1px solid #333; margin: 8px 0; }
+#info {
+  position: absolute; bottom: 10px; left: 10px;
+  background: rgba(20,20,28,0.8); padding: 8px 12px; border-radius: 6px;
+  font-size: 11px; color: #aaa;
+}
+#stats { color: #8ab4f8; }
+.chk { display: flex; align-items: center; gap: 6px; }
