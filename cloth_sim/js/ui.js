@@ -54,6 +54,8 @@ function init() {
   bind('grav',  v=>App.state.sim.gravity=v);
   bind('prad',  v=>{App.state.sim.particleRadius=v; App.state.sim.updateRadii();});
   bind('pdW',   v=>{ if(App.PD){ App.PD.springW=v; App.PD.dirty=true; } });
+  bind('vbdW',  v=>{ if(App.VBD){ App.VBD.springW=v; App.VBD.dirty=true; } });
+  bind('vbdD',  v=>{ if(App.VBD){ App.VBD.dampK=v; App.VBD.dirty=true; } });
 
   document.getElementById('solver').addEventListener('change', e=>App.state.sim.solver=e.target.value);
   document.getElementById('scene').addEventListener('change', e=>App.scenes.loadScene(e.target.value));
