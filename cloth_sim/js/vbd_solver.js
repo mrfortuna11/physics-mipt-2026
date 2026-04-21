@@ -4,6 +4,7 @@ const App = window.App = window.App || {};
 class VBDSolver {
   constructor() {
     this.springW = 200;     
+    this.dampK = 0.01;      
     this.adj = null;        
     this.dirty = true;
     this.prevVel = null;    
@@ -23,7 +24,6 @@ class VBDSolver {
     this.frameCount = 0;
   }
 
-  // One VBD substep
   substep(sim, h) {
     if (this.dirty || !this.adj || this.adj.length !== sim.P.length) {
       this.buildAdj(sim);
@@ -39,18 +39,18 @@ class VBDSolver {
       this.prevVel = new Float64Array(n * 3);
     }
 
-    const aExtY = g; 
+    const aExtY = g;  
     const aExtMag = Math.abs(aExtY);
 
     for (let i = 0; i < n; i++) {
       const p = sim.P[i];
-
       p.vel.multiplyScalar(Math.max(0, 1 - sim.damping * h));
 
       p.prev.copy(p.pos);
 
-      let aFactor = 1.0;  
+      let aFactor = 1.0; 
       if (this.frameCount > 5 && aExtMag > 1e-8) {
+
         const prevVy = this.prevVel[i * 3 + 1];
         const atY = (p.vel.y - prevVy) / h;  
         const aExtDir = aExtY / aExtMag;      
@@ -79,7 +79,7 @@ class VBDSolver {
       yz[i] = p.prev.z + h * this.prevVel[i * 3 + 2];
     }
 
-    // Gauss-Seidel iterations 
+    // Gauss-Seidel iterations
     for (let iter = 0; iter < sim.iters; iter++) {
       for (let i = 0; i < n; i++) {
         const p = sim.P[i];
@@ -113,14 +113,15 @@ class VBDSolver {
           const ratio = L / dist;
           const w = (c.comp !== null ? 1e6 : wS); 
 
+          // Gradient
           const gradScale = w * (1 - ratio);
           fx -= gradScale * dx;
           fy -= gradScale * dy;
           fz -= gradScale * dz;
 
-
+          // Hessian
           const a = w * ratio / (dist * dist);  
-          const b = w * (1 - ratio);            
+          const b = w * (1 - ratio);             
 
           h00 += a * dx * dx + b;
           h01 += a * dx * dy;
@@ -148,6 +149,29 @@ class VBDSolver {
             fx -= dampH * hsx;
             fy -= dampH * hsy;
             fz -= dampH * hsz;
+          }
+        }
+
+        {
+          const floorPen = p.r - p.pos.y;
+          if (floorPen > 0) {
+            const kc = 1e5;
+            fy += kc * floorPen;          
+            h11 += kc;                  
+
+            const frCoeff = sim.friction;
+            if (frCoeff > 0) {
+              const tanForceMag = kc * floorPen * frCoeff;
+              const vx = p.pos.x - p.prev.x;
+              const vz = p.pos.z - p.prev.z;
+              const tanSpeed = Math.sqrt(vx * vx + vz * vz);
+              if (tanSpeed > 1e-10) {
+                fx -= tanForceMag * vx / tanSpeed;
+                fz -= tanForceMag * vz / tanSpeed;
+                h00 += tanForceMag / tanSpeed;
+                h22 += tanForceMag / tanSpeed;
+              }
+            }
           }
         }
 
