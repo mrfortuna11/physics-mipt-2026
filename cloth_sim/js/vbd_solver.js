@@ -4,13 +4,12 @@ const App = window.App = window.App || {};
 class VBDSolver {
   constructor() {
     this.springW = 200;     
-    this.dampK = 0.01;      
     this.adj = null;        
     this.dirty = true;
     this.prevVel = null;    
+    this.frameCount = 0;    
   }
 
-  // Build adjacency list: for each particle, which constraints touch it
   buildAdj(sim) {
     const n = sim.P.length;
     this.adj = new Array(n);
@@ -21,6 +20,7 @@ class VBDSolver {
       this.adj[c.j].push(ci);
     }
     this.dirty = false;
+    this.frameCount = 0;
   }
 
   // One VBD substep
@@ -39,7 +39,7 @@ class VBDSolver {
       this.prevVel = new Float64Array(n * 3);
     }
 
-    const aExtY = g;  
+    const aExtY = g; 
     const aExtMag = Math.abs(aExtY);
 
     for (let i = 0; i < n; i++) {
@@ -50,11 +50,9 @@ class VBDSolver {
       p.prev.copy(p.pos);
 
       let aFactor = 1.0;  
-      if (aExtMag > 1e-8) {
-        const prevVx = this.prevVel[i * 3];
+      if (this.frameCount > 5 && aExtMag > 1e-8) {
         const prevVy = this.prevVel[i * 3 + 1];
-        const prevVz = this.prevVel[i * 3 + 2];
-        const atY = (p.vel.y - prevVy) / h; 
+        const atY = (p.vel.y - prevVy) / h;  
         const aExtDir = aExtY / aExtMag;      
         const atExt = atY * aExtDir;          
         if (atExt > aExtMag) aFactor = 1.0;
@@ -85,7 +83,7 @@ class VBDSolver {
     for (let iter = 0; iter < sim.iters; iter++) {
       for (let i = 0; i < n; i++) {
         const p = sim.P[i];
-        if (p.w === 0) continue;
+        if (p.w === 0) continue; 
 
         const mi = 1.0;  
 
@@ -102,7 +100,7 @@ class VBDSolver {
         for (let ai = 0; ai < adj.length; ai++) {
           const c = sim.C[adj[ai]];
           const ki = c.i === i ? c.j : c.i;  
-          const sign = c.i === i ? 1 : -1;   
+          const sign = c.i === i ? 1 : -1;    
 
           const pk = sim.P[ki].pos;
           const dx = p.pos.x - pk.x;
@@ -119,6 +117,7 @@ class VBDSolver {
           fx -= gradScale * dx;
           fy -= gradScale * dy;
           fz -= gradScale * dz;
+
 
           const a = w * ratio / (dist * dist);  
           const b = w * (1 - ratio);            
@@ -188,6 +187,7 @@ class VBDSolver {
       if (p.w === 0 || sim.pinned.has(i)) { p.vel.set(0, 0, 0); continue; }
       p.vel.subVectors(p.pos, p.prev).multiplyScalar(1 / h);
     }
+    this.frameCount++;
   }
 }
 
