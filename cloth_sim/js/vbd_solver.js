@@ -1,3 +1,18 @@
+// =====================================================================
+//  Vertex Block Descent (VBD) for distance constraints.
+//  Chen et al., SIGGRAPH 2024.
+//
+//  For each vertex i, solve local 3×3 Newton step:  H_i Δx_i = f_i
+//    f_i = -(m/h²)(x_i - y_i) - Σ ∂E_j/∂x_i
+//    H_i =  (m/h²)I            + Σ ∂²E_j/∂x_i²
+//
+//  Distance constraint energy: E = (w/2)(||d|| - L)²
+//    ∂E/∂x_i  = w(1 - L/||d||) d
+//    ∂²E/∂x_i² = w[ (L/||d||)(ddᵀ/||d||²) + (1 - L/||d||) I ]
+//
+//  Gauss-Seidel sweep: updates immediately visible to next vertices.
+//  Floor handled as penalty energy inside GS loop (Section 3.5).
+// =====================================================================
 (function(){
 const App = window.App = window.App || {};
 
@@ -31,31 +46,33 @@ class VBDSolver {
     const wS = this.springW;
     const kd = this.dampK;
 
-    // Save prev, apply damping, compute inertial target y
+    // 1) Save prev, apply damping, compute inertial target y
     const yx = new Float64Array(n), yy = new Float64Array(n), yz = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       const p = sim.P[i];
       p.vel.multiplyScalar(Math.max(0, 1 - sim.damping * h));
       p.prev.copy(p.pos);
 
+      // y = x^t + h*v + h²*g  (Eq. 3)
       yx[i] = p.pos.x + h * p.vel.x;
       yy[i] = p.pos.y + h * p.vel.y + h * h * g;
       yz[i] = p.pos.z + h * p.vel.z;
 
       if (p.w === 0) continue; // pinned
 
-      // Initialize: x = y 
+      // Initialize: x = y  (option c: inertia + gravity)
       p.pos.x = yx[i];
       p.pos.y = yy[i];
       p.pos.z = yz[i];
     }
 
-    // Gauss-Seidel iterations
+    // 2) Gauss-Seidel iterations
     for (let iter = 0; iter < sim.iters; iter++) {
       for (let i = 0; i < n; i++) {
         const p = sim.P[i];
         if (p.w === 0) continue;
 
+        // Inertia: f = -(m/h²)(x - y),  H = (m/h²)I
         let fx = -invHH * (p.pos.x - yx[i]);
         let fy = -invHH * (p.pos.y - yy[i]);
         let fz = -invHH * (p.pos.z - yz[i]);
@@ -94,7 +111,10 @@ class VBDSolver {
           h12 += a * dy * dz;
           h22 += a * dz * dz + b;
 
-          // Rayleigh damping 
+          // Rayleigh damping (Section 3.3): uses RELATIVE displacement
+          // between particles i and k (proper mass-spring damping).
+          // f_damp = -(kd/h) * H_spring * (v_i - v_k)
+          // where v = (x - x^t). Zero for rigid body motion.
           if (kd > 0) {
             const dh = kd / h;
             h00 += dh * (a * dx * dx + b);
@@ -103,16 +123,22 @@ class VBDSolver {
             h11 += dh * (a * dy * dy + b);
             h12 += dh * (a * dy * dz);
             h22 += dh * (a * dz * dz + b);
-            const vx = p.pos.x - p.prev.x;
-            const vy = p.pos.y - p.prev.y;
-            const vz = p.pos.z - p.prev.z;
-            fx -= dh * ((a*dx*dx+b)*vx + a*dx*dy*vy + a*dx*dz*vz);
-            fy -= dh * (a*dx*dy*vx + (a*dy*dy+b)*vy + a*dy*dz*vz);
-            fz -= dh * (a*dx*dz*vx + a*dy*dz*vy + (a*dz*dz+b)*vz);
+            // Relative displacement (v_i - v_k)
+            const vix = p.pos.x - p.prev.x;
+            const viy = p.pos.y - p.prev.y;
+            const viz = p.pos.z - p.prev.z;
+            const pk2 = sim.P[ki];
+            const vkx = pk2.pos.x - pk2.prev.x;
+            const vky = pk2.pos.y - pk2.prev.y;
+            const vkz = pk2.pos.z - pk2.prev.z;
+            const rvx = vix - vkx, rvy = viy - vky, rvz = viz - vkz;
+            fx -= dh * ((a*dx*dx+b)*rvx + a*dx*dy*rvy + a*dx*dz*rvz);
+            fy -= dh * (a*dx*dy*rvx + (a*dy*dy+b)*rvy + a*dy*dz*rvz);
+            fz -= dh * (a*dx*dz*rvx + a*dy*dz*rvy + (a*dz*dz+b)*rvz);
           }
         }
 
-        // Floor penalty energy 
+        // Floor penalty energy (Section 3.5)
         const floorPen = p.r - p.pos.y;
         if (floorPen > 0) {
           const kc = 1e5;
@@ -132,7 +158,7 @@ class VBDSolver {
           }
         }
 
-        // H Δx = f (Cramer's rule)
+        // Solve 3×3: H Δx = f (Cramer's rule)
         const det =
           h00 * (h11 * h22 - h12 * h12) -
           h01 * (h01 * h22 - h12 * h02) +
@@ -148,12 +174,12 @@ class VBDSolver {
       if (sim.grabIdx >= 0) sim.P[sim.grabIdx].pos.copy(sim.grabTarget);
     }
 
-    // Post-projection
+    // 3) Post-projection: floor safety + self collisions
     sim.solveFloor();
     if (sim.selfColl) sim.solveSelf();
     if (sim.grabIdx >= 0) sim.P[sim.grabIdx].pos.copy(sim.grabTarget);
 
-    // Velocity update
+    // 4) Velocity update
     for (let i = 0; i < n; i++) {
       const p = sim.P[i];
       if (p.w === 0 || sim.pinned.has(i)) { p.vel.set(0, 0, 0); continue; }

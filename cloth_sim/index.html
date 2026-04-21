@@ -3,18 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cloth Simulation — Jakobsen / PBD / XPBD / PD / VBD</title>
+<title>Cloth Simulation — Hitman / PBD / XPBD / PD / VBD</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <canvas id="c"></canvas>
 
 <div id="panel">
-  <h2>Cloth Simulation — Part 1</h2>
+  <h2>Cloth Simulation</h2>
 
   <div class="row"><label>Solver</label></div>
   <select id="solver">
-    <option value="JAK">Jakobsen (Hitman)</option>
+    <option value="JAK">Hitman</option>
     <option value="PBD">PBD</option>
     <option value="XPBD" selected>XPBD</option>
     <option value="PD">Projective Dynamics</option>
@@ -23,17 +23,17 @@
 
   <div class="row" style="margin-top:6px"><label>Scene</label></div>
   <select id="scene">
-    <option value="hang">1. Hanging (pinned corners)</option>
-    <option value="fall">2. Falling on floor (self-coll)</option>
-    <option value="stretch">3. Overstretched (conflict)</option>
-    <option value="ball">4. Rigid ball (bonus)</option>
+    <option value="hang">Hanging</option>
+    <option value="fall">Falling on floor</option>
+    <option value="stretch">Overstretched</option>
+    <option value="ball">Rigid ball</option>
   </select>
 
   <hr>
 
   <div class="row"><label>Iterations</label><input type="range" id="iters" min="1" max="40" value="8"><span class="val" id="itersVal">8</span></div>
   <div class="row"><label>Substeps</label><input type="range" id="subs" min="1" max="10" value="1"><span class="val" id="subsVal">1</span></div>
-  <div class="row"><label>Stiffness (PBD/Jak)</label><input type="range" id="stiff" min="0" max="1" step="0.01" value="1"><span class="val" id="stiffVal">1.00</span></div>
+  <div class="row"><label>Stiffness (PBD/Hitman)</label><input type="range" id="stiff" min="0" max="1" step="0.01" value="1"><span class="val" id="stiffVal">1.00</span></div>
   <div class="row"><label>Compliance (XPBD)</label><input type="range" id="comp" min="0" max="0.01" step="0.00005" value="0"><span class="val" id="compVal">0.0000</span></div>
   <div class="row"><label>PD spring weight</label><input type="range" id="pdW" min="1" max="2000" step="1" value="200"><span class="val" id="pdWVal">200</span></div>
   <div class="row"><label>VBD spring weight</label><input type="range" id="vbdW" min="1" max="2000" step="1" value="200"><span class="val" id="vbdWVal">200</span></div>
