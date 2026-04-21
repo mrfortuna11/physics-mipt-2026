@@ -3,12 +3,10 @@ const App = window.App = window.App || {};
 
 class VBDSolver {
   constructor() {
-    this.springW = 200;     
-    this.dampK = 0.01;      
-    this.adj = null;        
+    this.springW = 200;
+    this.dampK = 0.01;
+    this.adj = null;
     this.dirty = true;
-    this.prevVel = null;    
-    this.frameCount = 0;    
   }
 
   buildAdj(sim) {
@@ -16,12 +14,10 @@ class VBDSolver {
     this.adj = new Array(n);
     for (let i = 0; i < n; i++) this.adj[i] = [];
     for (let ci = 0; ci < sim.C.length; ci++) {
-      const c = sim.C[ci];
-      this.adj[c.i].push(ci);
-      this.adj[c.j].push(ci);
+      this.adj[sim.C[ci].i].push(ci);
+      this.adj[sim.C[ci].j].push(ci);
     }
     this.dirty = false;
-    this.frameCount = 0;
   }
 
   substep(sim, h) {
@@ -35,73 +31,43 @@ class VBDSolver {
     const wS = this.springW;
     const kd = this.dampK;
 
-    if (!this.prevVel || this.prevVel.length !== n * 3) {
-      this.prevVel = new Float64Array(n * 3);
-    }
-
-    const aExtY = g;  
-    const aExtMag = Math.abs(aExtY);
-
-    for (let i = 0; i < n; i++) {
-      const p = sim.P[i];
-      p.vel.multiplyScalar(Math.max(0, 1 - sim.damping * h));
-
-      p.prev.copy(p.pos);
-
-      let aFactor = 1.0; 
-      if (this.frameCount > 5 && aExtMag > 1e-8) {
-
-        const prevVy = this.prevVel[i * 3 + 1];
-        const atY = (p.vel.y - prevVy) / h;  
-        const aExtDir = aExtY / aExtMag;      
-        const atExt = atY * aExtDir;          
-        if (atExt > aExtMag) aFactor = 1.0;
-        else if (atExt < 0) aFactor = 0.0;
-        else aFactor = atExt / aExtMag;
-      }
-
-      this.prevVel[i * 3] = p.vel.x;
-      this.prevVel[i * 3 + 1] = p.vel.y;
-      this.prevVel[i * 3 + 2] = p.vel.z;
-
-      if (p.w === 0) continue; 
-
-      p.pos.x += h * p.vel.x;
-      p.pos.y += h * p.vel.y + h * h * aFactor * aExtY;
-      p.pos.z += h * p.vel.z;
-    }
-
+    // Save prev, apply damping, compute inertial target y
     const yx = new Float64Array(n), yy = new Float64Array(n), yz = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       const p = sim.P[i];
-      yx[i] = p.prev.x + h * this.prevVel[i * 3];
-      yy[i] = p.prev.y + h * this.prevVel[i * 3 + 1] + h * h * aExtY;
-      yz[i] = p.prev.z + h * this.prevVel[i * 3 + 2];
+      p.vel.multiplyScalar(Math.max(0, 1 - sim.damping * h));
+      p.prev.copy(p.pos);
+
+      yx[i] = p.pos.x + h * p.vel.x;
+      yy[i] = p.pos.y + h * p.vel.y + h * h * g;
+      yz[i] = p.pos.z + h * p.vel.z;
+
+      if (p.w === 0) continue; // pinned
+
+      // Initialize: x = y 
+      p.pos.x = yx[i];
+      p.pos.y = yy[i];
+      p.pos.z = yz[i];
     }
 
     // Gauss-Seidel iterations
     for (let iter = 0; iter < sim.iters; iter++) {
       for (let i = 0; i < n; i++) {
         const p = sim.P[i];
-        if (p.w === 0) continue; 
+        if (p.w === 0) continue;
 
-        const mi = 1.0;  
-
-        let fx = -mi * invHH * (p.pos.x - yx[i]);
-        let fy = -mi * invHH * (p.pos.y - yy[i]);
-        let fz = -mi * invHH * (p.pos.z - yz[i]);
-
-        let h00 = mi * invHH, h01 = 0, h02 = 0;
-        let h11 = mi * invHH, h12 = 0;
-        let h22 = mi * invHH;
+        let fx = -invHH * (p.pos.x - yx[i]);
+        let fy = -invHH * (p.pos.y - yy[i]);
+        let fz = -invHH * (p.pos.z - yz[i]);
+        let h00 = invHH, h01 = 0, h02 = 0;
+        let h11 = invHH, h12 = 0;
+        let h22 = invHH;
 
         // Spring contributions
         const adj = this.adj[i];
         for (let ai = 0; ai < adj.length; ai++) {
           const c = sim.C[adj[ai]];
-          const ki = c.i === i ? c.j : c.i;  
-          const sign = c.i === i ? 1 : -1;    
-
+          const ki = c.i === i ? c.j : c.i;
           const pk = sim.P[ki].pos;
           const dx = p.pos.x - pk.x;
           const dy = p.pos.y - pk.y;
@@ -111,18 +77,16 @@ class VBDSolver {
 
           const L = c.rest;
           const ratio = L / dist;
-          const w = (c.comp !== null ? 1e6 : wS); 
+          const w = (c.comp !== null) ? Math.max(wS, 1e4) : wS;
 
           // Gradient
-          const gradScale = w * (1 - ratio);
-          fx -= gradScale * dx;
-          fy -= gradScale * dy;
-          fz -= gradScale * dz;
+          fx -= w * (1 - ratio) * dx;
+          fy -= w * (1 - ratio) * dy;
+          fz -= w * (1 - ratio) * dz;
 
           // Hessian
-          const a = w * ratio / (dist * dist);  
-          const b = w * (1 - ratio);             
-
+          const a = w * ratio / (dist * dist);
+          const b = w * (1 - ratio);
           h00 += a * dx * dx + b;
           h01 += a * dx * dy;
           h02 += a * dx * dz;
@@ -130,88 +94,71 @@ class VBDSolver {
           h12 += a * dy * dz;
           h22 += a * dz * dz + b;
 
+          // Rayleigh damping 
           if (kd > 0) {
-            const dampH = kd / h;
-            const da = dampH * a, db = dampH * b;
-            h00 += da * dx * dx + db;
-            h01 += da * dx * dy;
-            h02 += da * dx * dz;
-            h11 += da * dy * dy + db;
-            h12 += da * dy * dz;
-            h22 += da * dz * dz + db;
-
+            const dh = kd / h;
+            h00 += dh * (a * dx * dx + b);
+            h01 += dh * (a * dx * dy);
+            h02 += dh * (a * dx * dz);
+            h11 += dh * (a * dy * dy + b);
+            h12 += dh * (a * dy * dz);
+            h22 += dh * (a * dz * dz + b);
             const vx = p.pos.x - p.prev.x;
             const vy = p.pos.y - p.prev.y;
             const vz = p.pos.z - p.prev.z;
-            const hsx = (a * dx * dx + b) * vx + (a * dx * dy) * vy + (a * dx * dz) * vz;
-            const hsy = (a * dx * dy) * vx + (a * dy * dy + b) * vy + (a * dy * dz) * vz;
-            const hsz = (a * dx * dz) * vx + (a * dy * dz) * vy + (a * dz * dz + b) * vz;
-            fx -= dampH * hsx;
-            fy -= dampH * hsy;
-            fz -= dampH * hsz;
+            fx -= dh * ((a*dx*dx+b)*vx + a*dx*dy*vy + a*dx*dz*vz);
+            fy -= dh * (a*dx*dy*vx + (a*dy*dy+b)*vy + a*dy*dz*vz);
+            fz -= dh * (a*dx*dz*vx + a*dy*dz*vy + (a*dz*dz+b)*vz);
           }
         }
 
-        {
-          const floorPen = p.r - p.pos.y;
-          if (floorPen > 0) {
-            const kc = 1e5;
-            fy += kc * floorPen;          
-            h11 += kc;                  
-
-            const frCoeff = sim.friction;
-            if (frCoeff > 0) {
-              const tanForceMag = kc * floorPen * frCoeff;
-              const vx = p.pos.x - p.prev.x;
-              const vz = p.pos.z - p.prev.z;
-              const tanSpeed = Math.sqrt(vx * vx + vz * vz);
-              if (tanSpeed > 1e-10) {
-                fx -= tanForceMag * vx / tanSpeed;
-                fz -= tanForceMag * vz / tanSpeed;
-                h00 += tanForceMag / tanSpeed;
-                h22 += tanForceMag / tanSpeed;
-              }
+        // Floor penalty energy 
+        const floorPen = p.r - p.pos.y;
+        if (floorPen > 0) {
+          const kc = 1e5;
+          fy += kc * floorPen;
+          h11 += kc;
+          if (sim.friction > 0) {
+            const tanF = kc * floorPen * sim.friction;
+            const vx = p.pos.x - p.prev.x;
+            const vz = p.pos.z - p.prev.z;
+            const ts = Math.sqrt(vx * vx + vz * vz);
+            if (ts > 1e-10) {
+              fx -= tanF * vx / ts;
+              fz -= tanF * vz / ts;
+              h00 += tanF / ts;
+              h22 += tanF / ts;
             }
           }
         }
 
+        // H Δx = f (Cramer's rule)
         const det =
           h00 * (h11 * h22 - h12 * h12) -
           h01 * (h01 * h22 - h12 * h02) +
           h02 * (h01 * h12 - h11 * h02);
+        if (Math.abs(det) < 1e-20) continue;
 
-        if (Math.abs(det) < 1e-20) continue; 
-
-        const invDet = 1 / det;
-        const i00 = (h11 * h22 - h12 * h12) * invDet;
-        const i01 = (h02 * h12 - h01 * h22) * invDet;
-        const i02 = (h01 * h12 - h02 * h11) * invDet;
-        const i11 = (h00 * h22 - h02 * h02) * invDet;
-        const i12 = (h02 * h01 - h00 * h12) * invDet;
-        const i22 = (h00 * h11 - h01 * h01) * invDet;
-
-        const ddx = i00 * fx + i01 * fy + i02 * fz;
-        const ddy = i01 * fx + i11 * fy + i12 * fz;
-        const ddz = i02 * fx + i12 * fy + i22 * fz;
-
-        p.pos.x += ddx;
-        p.pos.y += ddy;
-        p.pos.z += ddz;
+        const id = 1 / det;
+        p.pos.x += (h11*h22-h12*h12)*id*fx + (h02*h12-h01*h22)*id*fy + (h01*h12-h02*h11)*id*fz;
+        p.pos.y += (h02*h12-h01*h22)*id*fx + (h00*h22-h02*h02)*id*fy + (h02*h01-h00*h12)*id*fz;
+        p.pos.z += (h01*h12-h02*h11)*id*fx + (h02*h01-h00*h12)*id*fy + (h00*h11-h01*h01)*id*fz;
       }
 
       if (sim.grabIdx >= 0) sim.P[sim.grabIdx].pos.copy(sim.grabTarget);
     }
 
+    // Post-projection
     sim.solveFloor();
     if (sim.selfColl) sim.solveSelf();
     if (sim.grabIdx >= 0) sim.P[sim.grabIdx].pos.copy(sim.grabTarget);
 
+    // Velocity update
     for (let i = 0; i < n; i++) {
       const p = sim.P[i];
       if (p.w === 0 || sim.pinned.has(i)) { p.vel.set(0, 0, 0); continue; }
       p.vel.subVectors(p.pos, p.prev).multiplyScalar(1 / h);
     }
-    this.frameCount++;
   }
 }
 
