@@ -11,15 +11,17 @@ class Sim {
     this.gravity=9.8; this.particleRadius=0.05; this.selfColl=true;
     this.grabIdx=-1; this.grabTarget=new V3(); this.grabStoreW=0;
   }
-  addParticle(p,m=1){this.P.push({pos:p.clone(),prev:p.clone(),vel:new V3(),w:m>0?1/m:0,r:this.particleRadius}); if(window.App&&window.App.PD)window.App.PD.dirty=true; return this.P.length-1;}
-  addConstraint(i,j,c=null){const r=this.P[i].pos.distanceTo(this.P[j].pos);this.C.push({i,j,rest:r,lambda:0,comp:c}); if(window.App&&window.App.PD)window.App.PD.dirty=true;}
-  pin(i){this.P[i].w=0;this.pinned.add(i); if(window.App&&window.App.PD)window.App.PD.dirty=true;}
+  addParticle(p,m=1){this.P.push({pos:p.clone(),prev:p.clone(),vel:new V3(),w:m>0?1/m:0,r:this.particleRadius}); if(window.App&&window.App.PD)window.App.PD.dirty=true; if(window.App&&window.App.VBD)window.App.VBD.dirty=true; return this.P.length-1;}
+  addConstraint(i,j,c=null){const r=this.P[i].pos.distanceTo(this.P[j].pos);this.C.push({i,j,rest:r,lambda:0,comp:c}); if(window.App&&window.App.PD)window.App.PD.dirty=true; if(window.App&&window.App.VBD)window.App.VBD.dirty=true;}
+  pin(i){this.P[i].w=0;this.pinned.add(i); if(window.App&&window.App.PD)window.App.PD.dirty=true; if(window.App&&window.App.VBD)window.App.VBD.dirty=true;}
   updateRadii(){for(const p of this.P)p.r=this.particleRadius;}
   step(dt){
     const h = dt/this.substeps;
     for (let s = 0; s < this.substeps; s++) {
       if (this.solver === 'PD' && window.App && window.App.PD) {
         window.App.PD.substep(this, h);
+      } else if (this.solver === 'VBD' && window.App && window.App.VBD) {
+        window.App.VBD.substep(this, h);
       } else {
         this.substep(h);
       }
@@ -132,9 +134,9 @@ class Sim {
     }
   }
   applyGrab(){if(this.grabIdx>=0)this.P[this.grabIdx].pos.copy(this.grabTarget);}
-  startGrab(i,t){if(i<0)return;this.grabIdx=i;this.grabStoreW=this.P[i].w;this.P[i].w=0;this.grabTarget.copy(t); if(window.App&&window.App.PD)window.App.PD.dirty=true;}
+  startGrab(i,t){if(i<0)return;this.grabIdx=i;this.grabStoreW=this.P[i].w;this.P[i].w=0;this.grabTarget.copy(t); if(window.App&&window.App.PD)window.App.PD.dirty=true; if(window.App&&window.App.VBD)window.App.VBD.dirty=true;}
   moveGrab(t){this.grabTarget.copy(t);}
-  endGrab(){if(this.grabIdx<0)return;if(!this.pinned.has(this.grabIdx))this.P[this.grabIdx].w=this.grabStoreW;this.grabIdx=-1; if(window.App&&window.App.PD)window.App.PD.dirty=true;}
+  endGrab(){if(this.grabIdx<0)return;if(!this.pinned.has(this.grabIdx))this.P[this.grabIdx].w=this.grabStoreW;this.grabIdx=-1; if(window.App&&window.App.PD)window.App.PD.dirty=true; if(window.App&&window.App.VBD)window.App.VBD.dirty=true;}
 }
 
 window.App = window.App || {};
