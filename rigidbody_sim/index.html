@@ -1,0 +1,2135 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Rigid Body Dynamics</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #1a1a1a; color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* вкладки верхнего уровня */
+  #tabs {
+    display: flex; background: #222; border-bottom: 1px solid #333;
+    padding: 0 12px; flex-shrink: 0;
+  }
+  .tab {
+    padding: 10px 18px; cursor: pointer; color: #888;
+    border-bottom: 2px solid transparent; user-select: none;
+    font-size: 14px;
+  }
+  .tab.active { color: #fff; border-bottom-color: #4a9eff; }
+  .tab:hover { color: #ccc; }
+  .tab.disabled { color: #555; cursor: not-allowed; }
+  .tab.disabled:hover { color: #555; }
+
+  /* под-вкладки внутри части */
+  #subtabs {
+    display: flex; background: #1f1f1f; border-bottom: 1px solid #2c2c2c;
+    padding: 0 16px; flex-shrink: 0; font-size: 12px;
+  }
+  .subtab {
+    padding: 6px 14px; cursor: pointer; color: #888;
+    border-bottom: 2px solid transparent; user-select: none;
+  }
+  .subtab.active { color: #fff; border-bottom-color: #a78bfa; }
+  .subtab:hover { color: #ccc; }
+
+  /* панель контролов */
+  #controls {
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    padding: 8px 16px; background: #252525; border-bottom: 1px solid #333;
+    flex-shrink: 0; font-size: 13px;
+  }
+  #controls label { color: #aaa; display: flex; gap: 6px; align-items: center; }
+  #controls button {
+    background: #333; color: #eee; border: 1px solid #444;
+    padding: 5px 12px; border-radius: 3px; cursor: pointer; font-size: 13px;
+  }
+  #controls button:hover { background: #3d3d3d; }
+  #controls input[type="range"] { width: 100px; }
+  #controls .value { color: #ddd; min-width: 38px; font-variant-numeric: tabular-nums; }
+  .ctrl-group { display: flex; gap: 12px; align-items: center; }
+  .ctrl-group.hidden { display: none; }
+
+  /* рендер */
+  #scene-host { flex: 1; position: relative; overflow: hidden; }
+  #canvas { display: block; width: 100%; height: 100%; }
+
+  #overlays { position: absolute; inset: 0; pointer-events: none; }
+  .vp-label {
+    position: absolute; padding: 6px 10px;
+    background: rgba(20,20,20,0.78); border: 1px solid #333;
+    border-radius: 3px; font-size: 11px; line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+    color: #ddd; max-width: 320px;
+  }
+  .vp-label .title { color: #4a9eff; font-weight: 500; margin-bottom: 3px; }
+  .vp-label .note { color: #999; font-size: 10px; font-style: italic; }
+
+  .legend {
+    position: absolute; bottom: 10px; right: 10px;
+    background: rgba(20,20,20,0.85); border: 1px solid #333;
+    padding: 8px 10px; border-radius: 3px; font-size: 11px;
+    color: #ccc; line-height: 1.6;
+  }
+  .legend .sw { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; }
+  .legend.hidden { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="tabs">
+    <div class="tab active" data-tab="1">Часть 1 · Свободное вращение</div>
+    <div class="tab" data-tab="2">Часть 2 · Constraints</div>
+    <div class="tab" data-tab="3">Часть 3 · Коллизии</div>
+    <div class="tab disabled" data-tab="4">Часть 4 · Broadphase</div>
+  </div>
+
+  <div id="subtabs"></div>
+
+  <div id="controls">
+    <button id="btn-pause">⏸ Пауза</button>
+    <button id="btn-reset">↻ Reset</button>
+    <button id="btn-step">▶| Шаг</button>
+    <label>dt: <input id="sl-dt" type="range" min="0.0005" max="0.02" step="0.0005" value="0.002"><span class="value" id="v-dt">0.0020</span></label>
+    <label>substeps: <input id="sl-sub" type="range" min="1" max="20" step="1" value="4"><span class="value" id="v-sub">4</span></label>
+
+    <div class="ctrl-group" id="ctrl-part1">
+      <label>ω<sub>perturb</sub>: <input id="sl-pert" type="range" min="0" max="0.5" step="0.005" value="0.15"><span class="value" id="v-pert">0.150</span></label>
+    </div>
+
+    <div class="ctrl-group hidden" id="ctrl-part2-spring">
+      <label>gravity: <input id="sl-g" type="range" min="0" max="20" step="0.5" value="9.81"><span class="value" id="v-g">9.81</span></label>
+      <label>k (force): <input id="sl-k" type="range" min="10" max="500" step="10" value="50"><span class="value" id="v-k">50</span></label>
+      <label>c (damp): <input id="sl-c" type="range" min="0" max="5" step="0.1" value="1.0"><span class="value" id="v-c">1.0</span></label>
+      <label>Hz (soft): <input id="sl-hz" type="range" min="0.5" max="20" step="0.5" value="3"><span class="value" id="v-hz">3.0</span></label>
+      <label>ζ (soft): <input id="sl-zeta" type="range" min="0" max="2" step="0.05" value="0.7"><span class="value" id="v-zeta">0.70</span></label>
+    </div>
+
+    <div class="ctrl-group hidden" id="ctrl-part2-dist">
+      <label>gravity: <input id="sl-g2" type="range" min="0" max="20" step="0.5" value="9.81"><span class="value" id="v-g2">9.81</span></label>
+      <label>α (XPBD): <input id="sl-alpha" type="range" min="0" max="0.01" step="0.0001" value="0"><span class="value" id="v-alpha">0.0000</span></label>
+      <label>β (Baumgarte): <input id="sl-beta" type="range" min="0" max="1" step="0.02" value="0.2"><span class="value" id="v-beta">0.20</span></label>
+      <label>Hz (soft): <input id="sl-hz2" type="range" min="1" max="30" step="0.5" value="10"><span class="value" id="v-hz2">10.0</span></label>
+      <label>ζ (soft): <input id="sl-zeta2" type="range" min="0" max="2" step="0.05" value="0.7"><span class="value" id="v-zeta2">0.70</span></label>
+      <label>vel iters: <input id="sl-vi" type="range" min="1" max="20" step="1" value="4"><span class="value" id="v-vi">4</span></label>
+      <label>pos iters: <input id="sl-pi" type="range" min="0" max="10" step="1" value="2"><span class="value" id="v-pi">2</span></label>
+      <label>lin damp: <input id="sl-ld" type="range" min="0" max="5" step="0.1" value="0.5"><span class="value" id="v-ld">0.5</span></label>
+      <label>ang damp: <input id="sl-ad" type="range" min="0" max="5" step="0.1" value="0.5"><span class="value" id="v-ad">0.5</span></label>
+    </div>
+
+    <div class="ctrl-group hidden" id="ctrl-part3">
+      <label>restitution: <input id="sl-rest" type="range" min="0" max="1" step="0.05" value="0.2"><span class="value" id="v-rest">0.20</span></label>
+      <label>α (XPBD): <input id="sl-c3a" type="range" min="0" max="0.01" step="0.0001" value="0"><span class="value" id="v-c3a">0.0000</span></label>
+      <label>β (Baum): <input id="sl-c3b" type="range" min="0" max="0.5" step="0.01" value="0.1"><span class="value" id="v-c3b">0.10</span></label>
+      <label>pos iters: <input id="sl-c3pi" type="range" min="1" max="10" step="1" value="2"><span class="value" id="v-c3pi">2</span></label>
+      <label>vel iters: <input id="sl-c3vi" type="range" min="1" max="10" step="1" value="4"><span class="value" id="v-c3vi">4</span></label>
+    </div>
+  </div>
+
+  <div id="scene-host">
+    <canvas id="canvas"></canvas>
+    <div id="overlays"></div>
+
+    <div class="legend" id="legend-part1">
+      <div><span class="sw" style="background:#4ade80"></span>L₀ — начальный момент импульса</div>
+      <div><span class="sw" style="background:#f87171"></span>L(t) — текущий момент импульса</div>
+      <div><span class="sw" style="background:#fbbf24"></span>ω — угловая скорость</div>
+    </div>
+
+    <div class="legend hidden" id="legend-part2">
+      <div><span class="sw" style="background:#a78bfa"></span>пружинка / constraint</div>
+      <div><span class="sw" style="background:#4ade80; width: 8px; height: 8px; border-radius: 50%;"></span>якорь</div>
+      <div><span class="sw" style="background:#fbbf24; width: 8px; height: 8px; border-radius: 50%;"></span>точка крепления</div>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// =========================================================================
+//  Math helpers
+// =========================================================================
+
+function boxInertia(m, a, b, c) {
+  const I = new THREE.Matrix3();
+  const ix = (m / 12) * (b * b + c * c);
+  const iy = (m / 12) * (a * a + c * c);
+  const iz = (m / 12) * (a * a + b * b);
+  I.set(ix, 0, 0,  0, iy, 0,  0, 0, iz);
+  return I;
+}
+
+function mat3Inverse(M) {
+  const e = M.elements;
+  const a = e[0], b = e[3], c = e[6];
+  const d = e[1], ee = e[4], f = e[7];
+  const g = e[2], h = e[5], i = e[8];
+  const A =  (ee * i - f * h);
+  const B = -(d  * i - f * g);
+  const C =  (d  * h - ee* g);
+  const det = a * A + b * B + c * C;
+  const inv = 1 / det;
+  const R = new THREE.Matrix3();
+  R.set(
+    A * inv,                  -(b*i - c*h) * inv,    (b*f - c*ee) * inv,
+    B * inv,                   (a*i - c*g) * inv,   -(a*f - c*d ) * inv,
+    C * inv,                  -(a*h - b*g) * inv,    (a*ee - b*d) * inv
+  );
+  return R;
+}
+
+function mat3MulVec(M, v) {
+  const e = M.elements;
+  return new THREE.Vector3(
+    e[0]*v.x + e[3]*v.y + e[6]*v.z,
+    e[1]*v.x + e[4]*v.y + e[7]*v.z,
+    e[2]*v.x + e[5]*v.y + e[8]*v.z
+  );
+}
+
+function rotateInertia(I_body, R3) {
+  const tmp = new THREE.Matrix3().multiplyMatrices(R3, I_body);
+  const RT = R3.clone().transpose();
+  return new THREE.Matrix3().multiplyMatrices(tmp, RT);
+}
+
+function quatToMat3(q) {
+  const m4 = new THREE.Matrix4().makeRotationFromQuaternion(q);
+  const me = m4.elements;
+  const m3 = new THREE.Matrix3();
+  m3.set(
+    me[0], me[4], me[8],
+    me[1], me[5], me[9],
+    me[2], me[6], me[10]
+  );
+  return m3;
+}
+
+function integrateQuat(q, omegaWorld, dt) {
+  const dq = new THREE.Quaternion(omegaWorld.x, omegaWorld.y, omegaWorld.z, 0);
+  dq.multiply(q);
+  q.x += 0.5 * dt * dq.x;
+  q.y += 0.5 * dt * dq.y;
+  q.z += 0.5 * dt * dq.z;
+  q.w += 0.5 * dt * dq.w;
+  q.normalize();
+}
+
+function skew(v) {
+  const m = new THREE.Matrix3();
+  m.set(   0, -v.z,  v.y,
+         v.z,    0, -v.x,
+        -v.y,  v.x,    0);
+  return m;
+}
+
+function inertiaWorld(body) {
+  const R = quatToMat3(body.q);
+  return {
+    I:    rotateInertia(body.I_body,    R),
+    Iinv: rotateInertia(body.I_body_inv, R),
+    R
+  };
+}
+
+// =========================================================================
+//  RigidBody
+// =========================================================================
+
+class RigidBody {
+  constructor(mass, size) {
+    this.mass = mass;
+    this.invMass = mass > 0 ? 1 / mass : 0;
+    this.size = size.clone();
+    this.I_body     = boxInertia(mass > 0 ? mass : 1, size.x, size.y, size.z);
+    this.I_body_inv = mat3Inverse(this.I_body);
+    if (mass === 0) {
+      this.I_body_inv.set(0,0,0, 0,0,0, 0,0,0);
+    }
+
+    this.x = new THREE.Vector3();
+    this.v = new THREE.Vector3();
+    this.q = new THREE.Quaternion();
+    this.omega = new THREE.Vector3();
+
+    this.L0 = new THREE.Vector3();
+  }
+
+  getL() {
+    const { I } = inertiaWorld(this);
+    return mat3MulVec(I, this.omega);
+  }
+
+  getEnergy(gravity) {
+    const kinT = 0.5 * this.mass * this.v.lengthSq();
+    const kinR = 0.5 * this.omega.dot(this.getL());
+    const pot  = -this.mass * gravity.dot(this.x);
+    return kinT + kinR + pot;
+  }
+
+  worldPoint(rLocal) {
+    const R = quatToMat3(this.q);
+    return mat3MulVec(R, rLocal).add(this.x);
+  }
+
+  worldR(rLocal) {
+    const R = quatToMat3(this.q);
+    return mat3MulVec(R, rLocal);
+  }
+
+  pointVelocity(rWorld) {
+    return this.v.clone().add(new THREE.Vector3().crossVectors(this.omega, rWorld));
+  }
+
+  resetFree(q0, omega0) {
+    this.q.copy(q0);
+    this.omega.copy(omega0);
+    this.x.set(0,0,0);
+    this.v.set(0,0,0);
+    this.L0.copy(this.getL());
+  }
+}
+
+// =========================================================================
+//  Часть 1 — интеграторы
+// =========================================================================
+
+function stepGlobalConstL(body, dt) {
+  integrateQuat(body.q, body.omega, dt);
+  const { Iinv } = inertiaWorld(body);
+  body.omega.copy(mat3MulVec(Iinv, body.L0));
+}
+
+function stepBodyNoGyro(body, dt) {
+  const R = quatToMat3(body.q);
+  const Rt = R.clone().transpose();
+  const omegaBody = mat3MulVec(Rt, body.omega);
+  body.omega.copy(mat3MulVec(R, omegaBody));
+  integrateQuat(body.q, body.omega, dt);
+}
+
+function stepBodyExplicitGyro(body, dt) {
+  const R = quatToMat3(body.q);
+  const Rt = R.clone().transpose();
+  const omegaBody = mat3MulVec(Rt, body.omega);
+  const Iw = mat3MulVec(body.I_body, omegaBody);
+  const cross = new THREE.Vector3().crossVectors(omegaBody, Iw);
+  const domega = mat3MulVec(body.I_body_inv, cross.multiplyScalar(-1));
+  omegaBody.addScaledVector(domega, dt);
+  body.omega.copy(mat3MulVec(R, omegaBody));
+  integrateQuat(body.q, body.omega, dt);
+}
+
+function stepBodyImplicitGyro(body, dt) {
+  const R = quatToMat3(body.q);
+  const Rt = R.clone().transpose();
+  const omegaBody = mat3MulVec(Rt, body.omega);
+  const Ib = body.I_body;
+  const w = omegaBody.clone();
+
+  for (let it = 0; it < 3; it++) {
+    const Iw = mat3MulVec(Ib, w);
+    const cross = new THREE.Vector3().crossVectors(w, Iw);
+    const f = mat3MulVec(Ib, new THREE.Vector3().subVectors(w, omegaBody))
+                .add(cross.clone().multiplyScalar(dt));
+    if (f.length() < 1e-10) break;
+    const Sw  = skew(w);
+    const SIw = skew(Iw);
+    const SwI = new THREE.Matrix3().multiplyMatrices(Sw, Ib);
+    const J = new THREE.Matrix3();
+    for (let i = 0; i < 9; i++) {
+      J.elements[i] = Ib.elements[i] + dt * (SwI.elements[i] - SIw.elements[i]);
+    }
+    const Jinv = mat3Inverse(J);
+    const dw = mat3MulVec(Jinv, f).multiplyScalar(-1);
+    w.add(dw);
+  }
+  body.omega.copy(mat3MulVec(R, w));
+  integrateQuat(body.q, body.omega, dt);
+}
+
+// =========================================================================
+//  Часть 2 — общий шаг с внешней силой и неявной гироскопикой
+// =========================================================================
+
+// Предсказание скорости: v += dt·F/m, неявный шаг для ω с гироскопикой.
+// Позиции НЕ обновляются — это делает integratePositions после constraint solver.
+function predictVelocity(body, dt, externalFn, gravity) {
+  if (body.mass === 0) return;
+
+  const ext = externalFn ? externalFn(body) : { force: new THREE.Vector3(), torque: new THREE.Vector3() };
+  ext.force.addScaledVector(gravity, body.mass);
+
+  body.v.addScaledVector(ext.force, dt * body.invMass);
+
+  // linear/angular damping — только для тел Part 2 (у них useDamping = true)
+  if (body.useDamping) {
+    const ld = globalParams.linDamp;
+    const ad = globalParams.angDamp;
+    if (ld > 0) body.v.multiplyScalar(Math.exp(-ld * dt));
+    if (ad > 0) body.omega.multiplyScalar(Math.exp(-ad * dt));
+  }
+
+  body.v.addScaledVector(ext.force, dt * body.invMass);
+
+  // ω: неявный шаг с гироскопикой и явным torque
+  const R = quatToMat3(body.q);
+  const Rt = R.clone().transpose();
+  const omegaBody = mat3MulVec(Rt, body.omega);
+  const tauBody   = mat3MulVec(Rt, ext.torque);
+
+  const Ib = body.I_body;
+  const w  = omegaBody.clone();
+  for (let it = 0; it < 3; it++) {
+    const Iw = mat3MulVec(Ib, w);
+    const cross = new THREE.Vector3().crossVectors(w, Iw);
+    const f = mat3MulVec(Ib, new THREE.Vector3().subVectors(w, omegaBody))
+                .add(cross.clone().multiplyScalar(dt))
+                .addScaledVector(tauBody, -dt);
+    if (f.length() < 1e-10) break;
+    const Sw  = skew(w);
+    const SIw = skew(Iw);
+    const SwI = new THREE.Matrix3().multiplyMatrices(Sw, Ib);
+    const J = new THREE.Matrix3();
+    for (let i = 0; i < 9; i++) {
+      J.elements[i] = Ib.elements[i] + dt * (SwI.elements[i] - SIw.elements[i]);
+    }
+    const Jinv = mat3Inverse(J);
+    const dw = mat3MulVec(Jinv, f).multiplyScalar(-1);
+    w.add(dw);
+  }
+  body.omega.copy(mat3MulVec(R, w));
+}
+
+function integratePositions(body, dt) {
+  if (body.mass === 0) return;
+  body.x.addScaledVector(body.v, dt);
+  integrateQuat(body.q, body.omega, dt);
+}
+
+// Удобная обёртка для случая без constraint'ов
+function stepSI_implicit(body, dt, externalFn, gravity) {
+  predictVelocity(body, dt, externalFn, gravity);
+  integratePositions(body, dt);
+}
+
+// =========================================================================
+//  Soft constraint parameters (Erin Catto / Ross Nordby)
+// =========================================================================
+
+function softParams(hz, zeta, dt) {
+  const omega = 2 * Math.PI * hz;
+  const a1 = 2 * zeta + omega * dt;
+  const a2 = dt * omega * a1;
+  const a3 = 1 / (1 + a2);
+  return {
+    biasRate:     omega / a1,
+    massCoeff:    a2 * a3,
+    impulseCoeff: a3
+  };
+}
+
+// =========================================================================
+//  Three.js setup
+// =========================================================================
+
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setClearColor(0x1a1a1a, 1);
+renderer.autoClear = false;
+renderer.setScissorTest(true);
+
+const overlaysHost = document.getElementById('overlays');
+
+// =========================================================================
+//  Part 1 SimView
+// =========================================================================
+
+class Part1View {
+  constructor(name, description, integrator, color) {
+    this.name = name;
+    this.description = description;
+    this.integrator = integrator;
+    this.tab = 1;
+
+    this.scene = new THREE.Scene();
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(3, 5, 2);
+    this.scene.add(dir);
+
+    const axes = new THREE.AxesHelper(0.6);
+    axes.material.depthTest = false;
+    axes.material.transparent = true;
+    axes.material.opacity = 0.6;
+    this.scene.add(axes);
+
+    this.bodySize = new THREE.Vector3(0.4, 0.8, 1.2);
+    this.body = new RigidBody(1.0, this.bodySize);
+
+    const geom = new THREE.BoxGeometry(this.bodySize.x, this.bodySize.y, this.bodySize.z);
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.2 });
+    this.mesh = new THREE.Mesh(geom, mat);
+    this.scene.add(this.mesh);
+
+    const edges = new THREE.EdgesGeometry(geom);
+    this.mesh.add(new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 })));
+
+    this.arrL0 = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(), 1, 0x4ade80, 0.20, 0.12);
+    this.arrL  = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(), 1, 0xf87171, 0.16, 0.10);
+    this.arrW  = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(), 1, 0xfbbf24, 0.13, 0.08);
+    for (const arr of [this.arrL0, this.arrL, this.arrW]) {
+      arr.line.material.depthTest = false;
+      arr.line.material.transparent = true;
+      arr.cone.material.depthTest = false;
+      arr.cone.material.transparent = true;
+      arr.renderOrder = 999;
+      arr.line.renderOrder = 999;
+      arr.cone.renderOrder = 999;
+    }
+    this.scene.add(this.arrL0, this.arrL, this.arrW);
+
+    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 50);
+    this.camera.position.set(4, 3, 5);
+    this.camera.lookAt(0, 0, 0);
+
+    this.label = document.createElement('div');
+    this.label.className = 'vp-label';
+    overlaysHost.appendChild(this.label);
+  }
+
+  applyInitial(q0, omega0) {
+    this.body.resetFree(q0, omega0);
+    this._E0_init = null;
+    this.updateMesh();
+  }
+
+  step(dt) { this.integrator(this.body, dt); }
+
+  updateMesh() {
+    this.mesh.quaternion.copy(this.body.q);
+    const L = this.body.getL();
+    const Lmag = L.length();
+    const wMag = this.body.omega.length();
+    const L0mag = this.body.L0.length();
+    const ARR_LEN = 1.2;
+
+    this.arrL0.position.set(0,0,0);
+    if (L0mag > 1e-8) {
+      this.arrL0.setDirection(this.body.L0.clone().normalize());
+      this.arrL0.setLength(ARR_LEN * 1.15, 0.20, 0.12);
+    }
+    this.arrL.position.set(0,0,0);
+    if (Lmag > 1e-8) {
+      this.arrL.setDirection(L.clone().normalize());
+      this.arrL.setLength(ARR_LEN * 0.85, 0.16, 0.10);
+    }
+    this.arrW.position.set(0,0,0);
+    if (wMag > 1e-8) {
+      this.arrW.setDirection(this.body.omega.clone().normalize());
+      this.arrW.setLength(ARR_LEN * 0.6, 0.13, 0.08);
+    }
+  }
+
+  updateLabel() {
+    const L = this.body.getL();
+    const E = 0.5 * this.body.omega.dot(L);
+    const Lmag = L.length();
+    const L0mag = this.body.L0.length();
+    const dL = L.clone().sub(this.body.L0).length();
+    const dL_rel = L0mag > 1e-8 ? (dL / L0mag * 100) : 0;
+    let angleDeg = 0;
+    if (Lmag > 1e-8 && L0mag > 1e-8) {
+      const cos = L.dot(this.body.L0) / (Lmag * L0mag);
+      angleDeg = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
+    }
+    if (this._E0_init === null || this._E0_init === undefined) this._E0_init = E;
+    const dE_rel = Math.abs(this._E0_init) > 1e-8 ? ((E - this._E0_init) / this._E0_init * 100) : 0;
+
+    this.label.innerHTML = `
+      <div class="title">${this.name}</div>
+      |L|: ${Lmag.toFixed(4)}  &nbsp; Δ|L−L₀|: <span style="color:${dL_rel>1?'#f87171':'#4ade80'}">${dL_rel.toFixed(2)}%</span><br>
+      ∠(L,L₀): <span style="color:${angleDeg>1?'#f87171':'#4ade80'}">${angleDeg.toFixed(2)}°</span><br>
+      E: ${E.toFixed(4)}  &nbsp; ΔE: <span style="color:${dE_rel>0?'#fbbf24':'#60a5fa'}">${dE_rel>0?'+':''}${dE_rel.toFixed(2)}%</span><br>
+      <span class="note">${this.description}</span>
+    `;
+  }
+}
+
+// =========================================================================
+//  Part 2A — Spring view
+// =========================================================================
+
+class Part2SpringView {
+  constructor(name, description, springMode, color) {
+    this.name = name;
+    this.description = description;
+    this.springMode = springMode;
+    this.tab = 2;
+
+    this.scene = new THREE.Scene();
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(3, 5, 2);
+    this.scene.add(dir);
+
+    const axes = new THREE.AxesHelper(0.5);
+    axes.material.depthTest = false;
+    axes.material.transparent = true;
+    axes.material.opacity = 0.5;
+    this.scene.add(axes);
+
+    this.bodySize = new THREE.Vector3(0.6, 0.4, 0.4);
+    this.body = new RigidBody(1.0, this.bodySize);
+    this.body.useDamping = true;
+
+    const geom = new THREE.BoxGeometry(this.bodySize.x, this.bodySize.y, this.bodySize.z);
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.2 });
+    this.mesh = new THREE.Mesh(geom, mat);
+    this.scene.add(this.mesh);
+    const edges = new THREE.EdgesGeometry(geom);
+    this.mesh.add(new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 })));
+
+    // якорь в мире
+    this.anchorWorld = new THREE.Vector3(0, 1.5, 0);
+    const anchorMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06, 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0x4ade80 })
+    );
+    anchorMesh.position.copy(this.anchorWorld);
+    this.scene.add(anchorMesh);
+
+    // точка крепления (локальные координаты на теле)
+    this.attachLocal = new THREE.Vector3(this.bodySize.x * 0.5, this.bodySize.y * 0.5, 0);
+    this.attachMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 10, 10),
+      new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+    );
+    this.scene.add(this.attachMesh);
+
+    // линия пружинки
+    const lineGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    this.springLine = new THREE.Line(lineGeom, new THREE.LineBasicMaterial({ color: 0xa78bfa }));
+    this.scene.add(this.springLine);
+
+    // сетка-пол
+    const grid = new THREE.GridHelper(6, 12, 0x444444, 0x2a2a2a);
+    grid.position.y = -2.0;
+    this.scene.add(grid);
+
+    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 50);
+    this.camera.position.set(3.5, 1.0, 3.5);
+    this.camera.lookAt(0, 0, 0);
+
+    this.label = document.createElement('div');
+    this.label.className = 'vp-label';
+    overlaysHost.appendChild(this.label);
+
+    this.lambdaAcc = new THREE.Vector3();
+  }
+
+  reset() {
+    // Стартуем тело так, чтобы attach был немного ниже anchor по Y и слегка в стороне.
+    // anchor = (0, 1.5, 0), attach_local = (0.3, 0.2, 0).
+    // Хотим attach стартовал в ~(0.3, 1.0, 0), значит x_body = attach_world - r_world = (0, 0.8, 0)
+    this.body.x.set(0, 0.8, 0);
+    this.body.v.set(0, 0, 0);
+    this.body.q.identity();
+    this.body.omega.set(0, 0, 0);
+    this.lambdaAcc.set(0, 0, 0);
+    this._E0 = null;
+    this.updateMesh();
+  }
+
+  step(dt) {
+    const g = new THREE.Vector3(0, -globalParams.gravity, 0);
+
+    if (this.springMode === 'force') {
+      // пружинка как внешняя сила — обычный шаг SI
+      const k = globalParams.springK;
+      const c = globalParams.springC;
+      const externalFn = (body) => {
+        const rW      = body.worldR(this.attachLocal);
+        const attachW = body.x.clone().add(rW);
+        const vAttach = body.pointVelocity(rW);
+        const F = attachW.clone().sub(this.anchorWorld).multiplyScalar(-k)
+                     .addScaledVector(vAttach, -c);
+        const tau = new THREE.Vector3().crossVectors(rW, F);
+        return { force: F, torque: tau };
+      };
+      stepSI_implicit(this.body, dt, externalFn, g);
+
+    } else {
+      // soft constraint через XPBD:
+      //   1) сохраняем x_prev, q_prev
+      //   2) predict velocity (gravity) и integrate positions
+      //   3) solve XPBD constraint (корректирует x, q)
+      //   4) выводим v и ω из изменения позиции/ориентации
+      const body = this.body;
+      const x_prev = body.x.clone();
+      const q_prev = body.q.clone();
+
+      // λ XPBD сбрасывается каждый timestep (стандарт для XPBD)
+      this._xpbdLambda = 0;
+
+      // predict
+      predictVelocity(body, dt, null, g);
+      integratePositions(body, dt);
+
+      // solve constraint position-level
+      this.applySoftAnchor(dt);
+
+      // derive velocities
+      body.v.copy(body.x).sub(x_prev).multiplyScalar(1 / dt);
+      // ω = 2 · (Δq.xyz) / dt, со знаком из Δq.w
+      const dq = body.q.clone().multiply(q_prev.invert());
+      body.omega.set(2 * dq.x / dt, 2 * dq.y / dt, 2 * dq.z / dt);
+      if (dq.w < 0) body.omega.multiplyScalar(-1);
+    }
+  }
+
+  /**
+   *  Soft anchor: точка attach должна совпадать с anchor.
+   *  Применяется по компонентам осей мира (X, Y, Z) — 3 одномерных PGS прохода.
+   *  Делаем несколько итераций для лучшей сходимости при большом начальном нарушении.
+   *  Для каждой оси n:
+   *    m_eff⁻¹ = 1/m + (r × n)ᵀ I⁻¹ (r × n)
+   *    inc = -massCoeff * m_eff * (v_n + biasRate * C_n) - impulseCoeff * λ_n
+   *    λ_n += inc
+   *    применить impulse p = inc * n: v += p/m,  ω += I⁻¹(r × p)
+   */
+  /**
+   *  Soft anchor через XPBD-формулу (Müller 2020, formulas 2-9):
+   *  скалярный constraint C = |attach - anchor| с compliance α.
+   *  Compliance задаётся неявно через слайдер Hz: чем больше Hz, тем жёстче.
+   *  α [м/Н] = 1 / (m · ω²),  ω = 2π·Hz  — соответствие гармоническому осциллятору.
+   *
+   *  Внимание: это POSITION-LEVEL коррекция. Применяется к x и q,
+   *  v и ω выводятся из них в конце шага.
+   */
+  applySoftAnchor(dt) {
+    const body = this.body;
+    const omega = 2 * Math.PI * globalParams.softHz;
+    const compliance = 1 / (body.mass * omega * omega);  // [м/Н]
+    const alphaTilde = compliance / (dt * dt);
+
+    const { Iinv } = inertiaWorld(body);
+    const rW = body.worldR(this.attachLocal);
+    const attachW = body.x.clone().add(rW);
+    const dx = attachW.clone().sub(this.anchorWorld);
+    const c = dx.length();
+    if (c < 1e-10) return;
+    const n = dx.clone().multiplyScalar(1 / c);  // направление от anchor к attach
+
+    // generalized inverse mass для скалярного constraint
+    const rxn = new THREE.Vector3().crossVectors(rW, n);
+    const w = body.invMass + rxn.dot(mat3MulVec(Iinv, rxn));
+
+    // XPBD: Δλ = (-c - α̃·λ) / (w + α̃)
+    const lambdaPrev = this._xpbdLambda || 0;
+    const dLambda = (-c - alphaTilde * lambdaPrev) / (w + alphaTilde);
+    this._xpbdLambda = lambdaPrev + dLambda;
+
+    // p = Δλ · n  — позиционный impulse
+    const p = n.clone().multiplyScalar(dLambda);
+
+    // x += p/m
+    body.x.addScaledVector(p, body.invMass);
+
+    // q обновляется через rotation update:
+    //   q_new = q + 0.5 · [I⁻¹(r × p), 0] · q,  затем нормализация
+    const dq_axis = mat3MulVec(Iinv, new THREE.Vector3().crossVectors(rW, p));
+    const dq = new THREE.Quaternion(dq_axis.x, dq_axis.y, dq_axis.z, 0);
+    dq.multiply(body.q);
+    body.q.x += 0.5 * dq.x;
+    body.q.y += 0.5 * dq.y;
+    body.q.z += 0.5 * dq.z;
+    body.q.w += 0.5 * dq.w;
+    body.q.normalize();
+  }
+
+  updateMesh() {
+    this.mesh.position.copy(this.body.x);
+    this.mesh.quaternion.copy(this.body.q);
+
+    const attachW = this.body.worldPoint(this.attachLocal);
+    this.attachMesh.position.copy(attachW);
+
+    const pos = this.springLine.geometry.attributes.position;
+    pos.setXYZ(0, this.anchorWorld.x, this.anchorWorld.y, this.anchorWorld.z);
+    pos.setXYZ(1, attachW.x, attachW.y, attachW.z);
+    pos.needsUpdate = true;
+  }
+
+  updateLabel() {
+    const g = new THREE.Vector3(0, -globalParams.gravity, 0);
+    const E = this.body.getEnergy(g);
+    if (this._E0 === null || this._E0 === undefined) this._E0 = E;
+
+    const attachW = this.body.worldPoint(this.attachLocal);
+    const dist = attachW.clone().sub(this.anchorWorld).length();
+
+    this.label.innerHTML = `
+      <div class="title">${this.name}</div>
+      |attach − anchor|: ${dist.toFixed(3)} м<br>
+      y центра: ${this.body.x.y.toFixed(3)} м<br>
+      |v|: ${this.body.v.length().toFixed(3)} &nbsp; |ω|: ${this.body.omega.length().toFixed(3)}<br>
+      E: ${E.toFixed(3)} &nbsp; ΔE: ${(E - this._E0).toFixed(3)}<br>
+      <span class="note">${this.description}</span>
+    `;
+  }
+}
+
+// =========================================================================
+//  Part 2B — Distance constraint между двумя телами (не в ц.м.)
+//
+//  Базовый класс инкапсулирует сцену (потолок, два тела, линия constraint'а),
+//  а наследники реализуют разные solver'ы:
+//    - Part2DistView_XPBD
+//    - Part2DistView_SI_Baumgarte
+//    - Part2DistView_SI_NGS
+//    - Part2DistView_SI_Soft
+// =========================================================================
+
+class Part2DistView {
+  constructor(name, description, color) {
+    this.name = name;
+    this.description = description;
+    this.tab = 2;
+
+    this.scene = new THREE.Scene();
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(3, 5, 2);
+    this.scene.add(dir);
+
+    const axes = new THREE.AxesHelper(0.4);
+    axes.material.depthTest = false;
+    axes.material.transparent = true;
+    axes.material.opacity = 0.4;
+    this.scene.add(axes);
+
+    // Верхнее тело — статичное (mass = 0), прикреплено к "потолку"
+    this.body1Size = new THREE.Vector3(0.5, 0.3, 0.3);
+    this.body1 = new RigidBody(0, this.body1Size);  // mass = 0 → static
+    this.body1.x.set(0, 1.5, 0);
+
+    // Нижнее тело — свободное
+    this.body2Size = new THREE.Vector3(0.5, 0.3, 0.3);
+    this.body2 = new RigidBody(1.0, this.body2Size);
+    this.body2.useDamping = true;
+
+    // Локальные точки крепления (НЕ в центре масс)
+    this.r1Local = new THREE.Vector3( this.body1Size.x * 0.5, -this.body1Size.y * 0.5, 0); // нижний правый угол body1
+    this.r2Local = new THREE.Vector3(-this.body2Size.x * 0.5,  this.body2Size.y * 0.5, 0); // верхний левый угол body2
+
+    // Длина constraint'а
+    this.restLength = 0.8;
+
+    // Mesh верхнего тела
+    const mat1 = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.6 });
+    this.mesh1 = new THREE.Mesh(new THREE.BoxGeometry(...this.body1Size.toArray()), mat1);
+    this.mesh1.position.copy(this.body1.x);
+    this.scene.add(this.mesh1);
+    this.mesh1.add(new THREE.LineSegments(
+      new THREE.EdgesGeometry(this.mesh1.geometry),
+      new THREE.LineBasicMaterial({ color: 0x000000 })
+    ));
+
+    // Mesh нижнего тела
+    const mat2 = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.2 });
+    this.mesh2 = new THREE.Mesh(new THREE.BoxGeometry(...this.body2Size.toArray()), mat2);
+    this.scene.add(this.mesh2);
+    this.mesh2.add(new THREE.LineSegments(
+      new THREE.EdgesGeometry(this.mesh2.geometry),
+      new THREE.LineBasicMaterial({ color: 0x000000 })
+    ));
+
+    // Точки крепления (визуально)
+    this.attach1Mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.04, 10, 10),
+      new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+    );
+    this.scene.add(this.attach1Mesh);
+    this.attach2Mesh = this.attach1Mesh.clone();
+    this.scene.add(this.attach2Mesh);
+
+    // Линия-constraint
+    const lineGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    this.constraintLine = new THREE.Line(lineGeom, new THREE.LineBasicMaterial({ color: 0xa78bfa }));
+    this.scene.add(this.constraintLine);
+
+    // Сетка-пол
+    const grid = new THREE.GridHelper(6, 12, 0x444444, 0x2a2a2a);
+    grid.position.y = -2.0;
+    this.scene.add(grid);
+
+    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 50);
+    this.camera.position.set(3.5, 0.5, 3.5);
+    this.camera.lookAt(0, 0.5, 0);
+
+    this.label = document.createElement('div');
+    this.label.className = 'vp-label';
+    overlaysHost.appendChild(this.label);
+
+    // λ, накапливаемое между шагами (warmstart) — каждый солвер использует своё
+    this.lambda = 0;
+  }
+
+  reset() {
+    // body1 статичный, не меняется
+    this.body1.x.set(0, 1.5, 0);
+    this.body1.q.identity();
+    // body2: подвешено так, что constraint близок к выполнению,
+    // со смещением вбок для интересного движения
+    this.body2.x.set(0.5, 0.4, 0);
+    this.body2.v.set(0, 0, 0);
+    this.body2.q.identity();
+    this.body2.omega.set(0, 0, 0);
+    this.lambda = 0;
+    this._E0 = null;
+    this.updateMesh();
+  }
+
+  // Вычисляет позицию точек крепления и направление constraint'а в мире.
+  // Возвращает {p1, p2, r1W, r2W, n, c} где c — длина(p2-p1) - restLength.
+  getConstraintGeom() {
+    const r1W = this.body1.worldR(this.r1Local);
+    const r2W = this.body2.worldR(this.r2Local);
+    const p1 = this.body1.x.clone().add(r1W);
+    const p2 = this.body2.x.clone().add(r2W);
+    const d = p2.clone().sub(p1);
+    const len = d.length();
+    const n = len > 1e-10 ? d.clone().multiplyScalar(1 / len) : new THREE.Vector3(0, -1, 0);
+    const c = len - this.restLength;
+    return { p1, p2, r1W, r2W, n, c, len };
+  }
+
+  // Обобщённая inverse mass для distance constraint вдоль n.
+  // w = w1 + w2,  w_i = invMass_i + (r_i × n)ᵀ I_i⁻¹ (r_i × n).
+  // Статичное тело: invMass=0, I⁻¹=0 → w_i=0.
+  computeW(r1W, r2W, n) {
+    const { Iinv: Iinv1 } = inertiaWorld(this.body1);
+    const { Iinv: Iinv2 } = inertiaWorld(this.body2);
+    const rxn1 = new THREE.Vector3().crossVectors(r1W, n);
+    const rxn2 = new THREE.Vector3().crossVectors(r2W, n);
+    const w1 = this.body1.invMass + rxn1.dot(mat3MulVec(Iinv1, rxn1));
+    const w2 = this.body2.invMass + rxn2.dot(mat3MulVec(Iinv2, rxn2));
+    return { w1, w2, w: w1 + w2, Iinv1, Iinv2 };
+  }
+
+  // Применить позиционный impulse p = Δλ·n к обоим телам:
+  //   x_i += sign_i · p / m_i
+  //   q_i обновляется через Δq = 0.5·[Iinv·(r × sign·p), 0] · q
+  applyPositionImpulse(dLambda, r1W, r2W, n, Iinv1, Iinv2) {
+    const p = n.clone().multiplyScalar(dLambda);
+
+    if (this.body1.mass > 0) {
+      this.body1.x.addScaledVector(p, -this.body1.invMass);
+      const dq_axis = mat3MulVec(Iinv1, new THREE.Vector3().crossVectors(r1W, p)).multiplyScalar(-1);
+      const dq = new THREE.Quaternion(dq_axis.x, dq_axis.y, dq_axis.z, 0);
+      dq.multiply(this.body1.q);
+      this.body1.q.x += 0.5 * dq.x;
+      this.body1.q.y += 0.5 * dq.y;
+      this.body1.q.z += 0.5 * dq.z;
+      this.body1.q.w += 0.5 * dq.w;
+      this.body1.q.normalize();
+    }
+    if (this.body2.mass > 0) {
+      this.body2.x.addScaledVector(p,  this.body2.invMass);
+      const dq_axis = mat3MulVec(Iinv2, new THREE.Vector3().crossVectors(r2W, p));
+      const dq = new THREE.Quaternion(dq_axis.x, dq_axis.y, dq_axis.z, 0);
+      dq.multiply(this.body2.q);
+      this.body2.q.x += 0.5 * dq.x;
+      this.body2.q.y += 0.5 * dq.y;
+      this.body2.q.z += 0.5 * dq.z;
+      this.body2.q.w += 0.5 * dq.w;
+      this.body2.q.normalize();
+    }
+  }
+
+  // Применить velocity impulse p = Δλ·n к обоим телам (для SI):
+  //   v_i += sign_i · p / m_i
+  //   ω_i += sign_i · I_i⁻¹ · (r_i × p)
+  applyVelocityImpulse(dLambda, r1W, r2W, n, Iinv1, Iinv2) {
+    const p = n.clone().multiplyScalar(dLambda);
+    if (this.body1.mass > 0) {
+      this.body1.v.addScaledVector(p, -this.body1.invMass);
+      this.body1.omega.add(mat3MulVec(Iinv1, new THREE.Vector3().crossVectors(r1W, p)).multiplyScalar(-1));
+    }
+    if (this.body2.mass > 0) {
+      this.body2.v.addScaledVector(p,  this.body2.invMass);
+      this.body2.omega.add(mat3MulVec(Iinv2, new THREE.Vector3().crossVectors(r2W, p)));
+    }
+  }
+
+  // Относительная скорость точек крепления вдоль n.
+  getRelativeNormalVelocity(r1W, r2W, n) {
+    const v1p = this.body1.pointVelocity(r1W);
+    const v2p = this.body2.pointVelocity(r2W);
+    return v2p.sub(v1p).dot(n);
+  }
+
+  // ===== Базовый шаг — переопределяется в наследниках =====
+  step(dt) {
+    throw new Error('Part2DistView.step must be overridden');
+  }
+
+  updateMesh() {
+    this.mesh1.position.copy(this.body1.x);
+    this.mesh1.quaternion.copy(this.body1.q);
+    this.mesh2.position.copy(this.body2.x);
+    this.mesh2.quaternion.copy(this.body2.q);
+
+    const { p1, p2 } = this.getConstraintGeom();
+    this.attach1Mesh.position.copy(p1);
+    this.attach2Mesh.position.copy(p2);
+
+    const pos = this.constraintLine.geometry.attributes.position;
+    pos.setXYZ(0, p1.x, p1.y, p1.z);
+    pos.setXYZ(1, p2.x, p2.y, p2.z);
+    pos.needsUpdate = true;
+  }
+
+  updateLabel() {
+    const g = new THREE.Vector3(0, -globalParams.gravity, 0);
+    const E = this.body2.getEnergy(g);
+    if (this._E0 === null || this._E0 === undefined) this._E0 = E;
+    const { c, len } = this.getConstraintGeom();
+    const errRel = this.restLength > 1e-8 ? (c / this.restLength * 100) : 0;
+
+    this.label.innerHTML = `
+      <div class="title">${this.name}</div>
+      длина: ${len.toFixed(3)} (rest ${this.restLength.toFixed(2)})<br>
+      ошибка C: <span style="color:${Math.abs(errRel)>2?'#f87171':'#4ade80'}">${errRel.toFixed(2)}%</span><br>
+      |v|: ${this.body2.v.length().toFixed(3)} &nbsp; |ω|: ${this.body2.omega.length().toFixed(3)}<br>
+      E: ${E.toFixed(3)} &nbsp; ΔE: ${(E - this._E0).toFixed(3)}<br>
+      <span class="note">${this.description}</span>
+    `;
+  }
+}
+
+// ----- (a) XPBD -----
+class Part2DistView_XPBD extends Part2DistView {
+  step(dt) {
+    const g = new THREE.Vector3(0, -globalParams.gravity, 0);
+    const body2 = this.body2;
+
+    // Сохраняем prev
+    const x_prev = body2.x.clone();
+    const q_prev = body2.q.clone();
+
+    // λ сбрасывается каждый timestep (стандарт XPBD)
+    this.lambda = 0;
+
+    // predict velocity + integrate positions
+    predictVelocity(body2, dt, null, g);
+    integratePositions(body2, dt);
+
+    // solve constraint (1 итерация — quasi-explicit)
+    const compliance = globalParams.distCompliance;
+    const alphaTilde = compliance / (dt * dt);
+    const { r1W, r2W, n, c } = this.getConstraintGeom();
+    const { w, Iinv1, Iinv2 } = this.computeW(r1W, r2W, n);
+    const dLambda = (-c - alphaTilde * this.lambda) / (w + alphaTilde);
+    this.lambda += dLambda;
+    this.applyPositionImpulse(dLambda, r1W, r2W, n, Iinv1, Iinv2);
+
+    // derive velocities
+    body2.v.copy(body2.x).sub(x_prev).multiplyScalar(1 / dt);
+    const dq = body2.q.clone().multiply(q_prev.invert());
+    body2.omega.set(2 * dq.x / dt, 2 * dq.y / dt, 2 * dq.z / dt);
+    if (dq.w < 0) body2.omega.multiplyScalar(-1);
+  }
+}
+
+// ----- (b) SI + Baumgarte -----
+class Part2DistView_SI_Baumgarte extends Part2DistView {
+  step(dt) {
+    const g = new THREE.Vector3(0, -globalParams.gravity, 0);
+    predictVelocity(this.body2, dt, null, g);
+
+    // Геометрия ФИКСИРУЕТСЯ до loop — чистый линейный PGS.
+    // Якобиан не обновляется между итерациями (отличие от NGS).
+    const { r1W, r2W, n, c } = this.getConstraintGeom();
+    const { w, Iinv1, Iinv2 } = this.computeW(r1W, r2W, n);
+    const beta = globalParams.baumgarte;
+
+    // Warmstart: применяем λ с прошлого шага как начальное приближение
+    this.applyVelocityImpulse(this.lambda, r1W, r2W, n, Iinv1, Iinv2);
+
+    const NUM_ITER = globalParams.siIters;
+    for (let iter = 0; iter < NUM_ITER; iter++) {
+      const vN = this.getRelativeNormalVelocity(r1W, r2W, n);
+      // Baumgarte: целевая скорость = -β·C (убираем позиционную ошибку за ~1/β секунд)
+      const dLambda = (-vN - beta * c) / w;
+      const prevLambda = this.lambda;
+      this.lambda += dLambda;
+      this.applyVelocityImpulse(this.lambda - prevLambda, r1W, r2W, n, Iinv1, Iinv2);
+    }
+
+    integratePositions(this.body2, dt);
+  }
+}
+
+// ----- (c) SI + NGS (отдельный position solve) -----
+class Part2DistView_SI_NGS extends Part2DistView {
+  step(dt) {
+    const g = new THREE.Vector3(0, -globalParams.gravity, 0);
+    predictVelocity(this.body2, dt, null, g);
+
+    // Velocity solve без bias (только убираем относительную скорость вдоль constraint)
+    const NUM_ITER = globalParams.siIters;
+    for (let iter = 0; iter < NUM_ITER; iter++) {
+      const { r1W, r2W, n } = this.getConstraintGeom();
+      const { w, Iinv1, Iinv2 } = this.computeW(r1W, r2W, n);
+      const vN = this.getRelativeNormalVelocity(r1W, r2W, n);
+      const dLambda = -vN / w;
+      this.applyVelocityImpulse(dLambda, r1W, r2W, n, Iinv1, Iinv2);
+    }
+
+    integratePositions(this.body2, dt);
+
+    // Position solve (NGS): нелинейный — на каждой итерации пересчёт якобиана.
+    // Корректируем напрямую x, q. v, ω остаются от velocity solve.
+    const NUM_POS_ITER = globalParams.posIters;
+    for (let iter = 0; iter < NUM_POS_ITER; iter++) {
+      const { r1W, r2W, n, c } = this.getConstraintGeom();
+      if (Math.abs(c) < 1e-6) break;
+      const { w, Iinv1, Iinv2 } = this.computeW(r1W, r2W, n);
+      const dLambda = -c / w;
+      this.applyPositionImpulse(dLambda, r1W, r2W, n, Iinv1, Iinv2);
+    }
+  }
+}
+
+// ----- (d) SI + Soft (пружинка Будды) -----
+class Part2DistView_SI_Soft extends Part2DistView {
+  step(dt) {
+    const g = new THREE.Vector3(0, -globalParams.gravity, 0);
+    predictVelocity(this.body2, dt, null, g);
+
+    const sp = softParams(globalParams.softHz, globalParams.softZeta, dt);
+
+    // PGS итерации с soft formula. λ сбрасывается каждый substep:
+    // это TGS-стиль (каждый substep — самостоятельный mini-timestep).
+    this.lambda = 0;
+    const NUM_ITER = globalParams.siIters;
+    for (let iter = 0; iter < NUM_ITER; iter++) {
+      const { r1W, r2W, n, c } = this.getConstraintGeom();
+      const { w, Iinv1, Iinv2 } = this.computeW(r1W, r2W, n);
+      const meff = 1 / w;
+      const vN = this.getRelativeNormalVelocity(r1W, r2W, n);
+      const dLambda = -sp.massCoeff * meff * (vN + sp.biasRate * c)
+                      - sp.impulseCoeff * this.lambda;
+      this.lambda += dLambda;
+      this.applyVelocityImpulse(dLambda, r1W, r2W, n, Iinv1, Iinv2);
+    }
+
+    integratePositions(this.body2, dt);
+  }
+}
+
+
+
+
+
+// =========================================================================
+//  Часть 3 — Коллизии между твёрдыми телами
+// =========================================================================
+
+// ---- Collision detection ----
+
+// Возвращает 8 вершин AABB-параллелепипеда в мировых координатах
+function getWorldVertices(body) {
+  const h = body.size.clone().multiplyScalar(0.5);
+  const verts = [];
+  for (let sx of [-1, 1]) for (let sy of [-1, 1]) for (let sz of [-1, 1]) {
+    const local = new THREE.Vector3(sx * h.x, sy * h.y, sz * h.z);
+    verts.push(body.worldPoint(local));
+  }
+  return verts;
+}
+
+// Возвращает 6 граней тела: { normal (мировой), dist }
+// dist = (center + d*normal), d = half-extent вдоль normal
+function getWorldFaces(body) {
+  const R = quatToMat3(body.q);
+  const h = body.size.clone().multiplyScalar(0.5);
+  const axes = [
+    new THREE.Vector3(1,0,0), new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,1)
+  ];
+  const faces = [];
+  for (let i = 0; i < 3; i++) {
+    const n = mat3MulVec(R, axes[i]).normalize();
+    const ext = [h.x, h.y, h.z][i];
+    // грань +n: offset = body.x·n + ext
+    // грань -n: offset = body.x·n - ext
+    faces.push({ n: n.clone(), d: body.x.dot(n) + ext });
+    faces.push({ n: n.clone().negate(), d: -body.x.dot(n) + ext });
+  }
+  return faces;
+}
+
+// Тест: находится ли точка p внутри OBB тела.
+// Если да — возвращает penetration depth и nearest face normal.
+function testVertexInBox(p, body) {
+  const R = quatToMat3(body.q);
+  const Rt = R.clone().transpose();
+  // переводим p в local frame тела
+  const local = mat3MulVec(Rt, p.clone().sub(body.x));
+  const h = body.size.clone().multiplyScalar(0.5);
+
+  // проверяем что local внутри [-hx..hx] x [-hy..hy] x [-hz..hz]
+  if (Math.abs(local.x) > h.x) return null;
+  if (Math.abs(local.y) > h.y) return null;
+  if (Math.abs(local.z) > h.z) return null;
+
+  // глубина проникновения по каждой оси (насколько близко к грани)
+  const dx = h.x - Math.abs(local.x);
+  const dy = h.y - Math.abs(local.y);
+  const dz = h.z - Math.abs(local.z);
+
+  // ближайшая грань — минимальная penetration
+  let depth, faceNormalLocal;
+  if (dx <= dy && dx <= dz) {
+    depth = dx;
+    faceNormalLocal = new THREE.Vector3(Math.sign(local.x), 0, 0);
+  } else if (dy <= dz) {
+    depth = dy;
+    faceNormalLocal = new THREE.Vector3(0, Math.sign(local.y), 0);
+  } else {
+    depth = dz;
+    faceNormalLocal = new THREE.Vector3(0, 0, Math.sign(local.z));
+  }
+
+  // нормаль в мировых координатах (направлена наружу из тела body)
+  const normal = mat3MulVec(R, faceNormalLocal).normalize();
+
+  return { depth, normal, point: p.clone() };
+}
+
+// SAT (Separating Axis Theorem) для пары OBB.
+// Возвращает { normal, depth, point } или null если нет пересечения.
+// normal направлен от B к A.
+function satOBB(A, B) {
+  const RA = quatToMat3(A.q);
+  const RB = quatToMat3(B.q);
+  const hA = A.size.clone().multiplyScalar(0.5);
+  const hB = B.size.clone().multiplyScalar(0.5);
+
+  // Оси A и B в мировом пространстве
+  const axA = [
+    new THREE.Vector3(RA.elements[0], RA.elements[1], RA.elements[2]),
+    new THREE.Vector3(RA.elements[3], RA.elements[4], RA.elements[5]),
+    new THREE.Vector3(RA.elements[6], RA.elements[7], RA.elements[8]),
+  ];
+  const axB = [
+    new THREE.Vector3(RB.elements[0], RB.elements[1], RB.elements[2]),
+    new THREE.Vector3(RB.elements[3], RB.elements[4], RB.elements[5]),
+    new THREE.Vector3(RB.elements[6], RB.elements[7], RB.elements[8]),
+  ];
+
+  const T = B.x.clone().sub(A.x); // вектор от A к B
+
+  let minDepth = Infinity;
+  let bestAxis = null;
+  let bestSign = 1;
+
+  const testAxis = (axis) => {
+    if (axis.lengthSq() < 1e-10) return true; // вырожденная ось
+    axis.normalize();
+    const tProj = Math.abs(T.dot(axis));
+    const rA = hA.x * Math.abs(axA[0].dot(axis))
+             + hA.y * Math.abs(axA[1].dot(axis))
+             + hA.z * Math.abs(axA[2].dot(axis));
+    const rB = hB.x * Math.abs(axB[0].dot(axis))
+             + hB.y * Math.abs(axB[1].dot(axis))
+             + hB.z * Math.abs(axB[2].dot(axis));
+    const depth = rA + rB - tProj;
+    if (depth < 0) return false; // разделяющая ось найдена
+    if (depth < minDepth) {
+      minDepth = depth;
+      bestAxis = axis.clone();
+      bestSign = T.dot(axis) >= 0 ? 1 : -1; // нормаль направлена от A к B
+    }
+    return true;
+  };
+
+  // 6 осей граней A и B
+  for (const ax of [...axA, ...axB]) {
+    if (!testAxis(ax.clone())) return null;
+  }
+
+  // 9 осей рёбер (cross products)
+  for (const a of axA) {
+    for (const b of axB) {
+      const cross = new THREE.Vector3().crossVectors(a, b);
+      if (cross.lengthSq() > 1e-6) {
+        if (!testAxis(cross)) return null;
+      }
+    }
+  }
+
+  if (!bestAxis) return null;
+
+  // нормаль: от A к B * bestSign, нам нужна от B к A
+  const normal = bestAxis.clone().multiplyScalar(-bestSign);
+
+  // Точка контакта — приближение: середина между ближайшими гранями
+  const point = A.x.clone().addScaledVector(normal, -minDepth * 0.5)
+                .add(B.x.clone().addScaledVector(normal, minDepth * 0.5))
+                .multiplyScalar(0.5);
+
+  return { normal, depth: minDepth, point };
+}
+
+function detectCollisions(bodies) {
+  const contacts = [];
+  for (let i = 0; i < bodies.length; i++) {
+    for (let j = i + 1; j < bodies.length; j++) {
+      const A = bodies[i], B = bodies[j];
+      if (A.mass === 0 && B.mass === 0) continue;
+      const c = satOBB(A, B);
+      if (c) contacts.push({ bodyA: A, bodyB: B,
+        point: c.point, normal: c.normal, depth: c.depth, lambda: 0 });
+    }
+  }
+  return contacts;
+}
+
+function detectBodyVsPlane(body, planeNormal, planeD) {
+  const contacts = [];
+  const R = quatToMat3(body.q);
+  const h = body.size.clone().multiplyScalar(0.5);
+  const axes = [
+    new THREE.Vector3(R.elements[0], R.elements[1], R.elements[2]),
+    new THREE.Vector3(R.elements[3], R.elements[4], R.elements[5]),
+    new THREE.Vector3(R.elements[6], R.elements[7], R.elements[8]),
+  ];
+  const r = h.x * Math.abs(axes[0].dot(planeNormal))
+           + h.y * Math.abs(axes[1].dot(planeNormal))
+           + h.z * Math.abs(axes[2].dot(planeNormal));
+  const centerDist = body.x.dot(planeNormal) - planeD;
+  const depth = r - centerDist;
+  if (depth <= 0) return contacts;
+  const contactPoint = body.x.clone().addScaledVector(planeNormal, -(centerDist - r));
+  contacts.push({ bodyA: body, bodyB: null,
+    point: contactPoint, normal: planeNormal.clone(), depth, lambda: 0,
+    _planeD: planeD });
+  return contacts;
+}
+
+// ---- Применение контактного импульса (общее для XPBD и SI) ----
+
+function applyContactImpulseVelocity(contact, dLambda) {
+  const { bodyA, bodyB, point, normal } = contact;
+  const p = normal.clone().multiplyScalar(dLambda);
+
+  if (bodyA && bodyA.mass > 0) {
+    const { Iinv } = inertiaWorld(bodyA);
+    const rA = point.clone().sub(bodyA.x);
+    bodyA.v.addScaledVector(p, bodyA.invMass);
+    bodyA.omega.add(mat3MulVec(Iinv, new THREE.Vector3().crossVectors(rA, p)));
+  }
+  if (bodyB && bodyB.mass > 0) {
+    const { Iinv } = inertiaWorld(bodyB);
+    const rB = point.clone().sub(bodyB.x);
+    bodyB.v.addScaledVector(p, -bodyB.invMass);
+    bodyB.omega.sub(mat3MulVec(Iinv, new THREE.Vector3().crossVectors(rB, p)));
+  }
+}
+
+function applyContactImpulsePosition(contact, dLambda) {
+  const { bodyA, bodyB, point, normal } = contact;
+  const p = normal.clone().multiplyScalar(dLambda);
+
+  if (bodyA && bodyA.mass > 0) {
+    const { Iinv } = inertiaWorld(bodyA);
+    const rA = point.clone().sub(bodyA.x);
+    bodyA.x.addScaledVector(p, bodyA.invMass);
+    const dqA = mat3MulVec(Iinv, new THREE.Vector3().crossVectors(rA, p));
+    const qDelta = new THREE.Quaternion(dqA.x, dqA.y, dqA.z, 0);
+    qDelta.multiply(bodyA.q);
+    bodyA.q.x += 0.5 * qDelta.x; bodyA.q.y += 0.5 * qDelta.y;
+    bodyA.q.z += 0.5 * qDelta.z; bodyA.q.w += 0.5 * qDelta.w;
+    bodyA.q.normalize();
+  }
+  if (bodyB && bodyB.mass > 0) {
+    const { Iinv } = inertiaWorld(bodyB);
+    const rB = point.clone().sub(bodyB.x);
+    bodyB.x.addScaledVector(p, -bodyB.invMass);
+    const dqB = mat3MulVec(Iinv, new THREE.Vector3().crossVectors(rB, p)).multiplyScalar(-1);
+    const qDelta = new THREE.Quaternion(dqB.x, dqB.y, dqB.z, 0);
+    qDelta.multiply(bodyB.q);
+    bodyB.q.x += 0.5 * qDelta.x; bodyB.q.y += 0.5 * qDelta.y;
+    bodyB.q.z += 0.5 * qDelta.z; bodyB.q.w += 0.5 * qDelta.w;
+    bodyB.q.normalize();
+  }
+}
+
+// Обобщённая inverse mass для контактного constraint вдоль normal
+function contactGeneralizedW(contact) {
+  const { bodyA, bodyB, point, normal } = contact;
+  let w = 0;
+  if (bodyA && bodyA.mass > 0) {
+    const { Iinv } = inertiaWorld(bodyA);
+    const rA = point.clone().sub(bodyA.x);
+    const rxn = new THREE.Vector3().crossVectors(rA, normal);
+    w += bodyA.invMass + rxn.dot(mat3MulVec(Iinv, rxn));
+  }
+  if (bodyB && bodyB.mass > 0) {
+    const { Iinv } = inertiaWorld(bodyB);
+    const rB = point.clone().sub(bodyB.x);
+    const rxn = new THREE.Vector3().crossVectors(rB, normal);
+    w += bodyB.invMass + rxn.dot(mat3MulVec(Iinv, rxn));
+  }
+  return w;
+}
+
+// Относительная скорость в точке контакта вдоль normal
+function contactRelativeVelocity(contact) {
+  const { bodyA, bodyB, point, normal } = contact;
+  let vRel = new THREE.Vector3();
+  if (bodyA && bodyA.mass > 0) {
+    const rA = point.clone().sub(bodyA.x);
+    vRel.add(bodyA.v.clone().add(new THREE.Vector3().crossVectors(bodyA.omega, rA)));
+  }
+  if (bodyB && bodyB.mass > 0) {
+    const rB = point.clone().sub(bodyB.x);
+    vRel.sub(bodyB.v.clone().add(new THREE.Vector3().crossVectors(bodyB.omega, rB)));
+  }
+  return vRel.dot(normal);
+}
+
+// ---- Spatial Grid для Части 3C ----
+
+class SpatialGrid {
+  constructor(cellSize) {
+    this.cellSize = cellSize;
+    this.cells = new Map();
+  }
+
+  _key(ix, iy, iz) { return `${ix},${iy},${iz}`; }
+
+  clear() { this.cells.clear(); }
+
+  insert(body, idx) {
+    // Вставляем тело в все ячейки, которые пересекает его AABB
+    const h = body.size.clone().multiplyScalar(0.5);
+    const r = Math.max(h.x, h.y, h.z) * 1.5; // консервативный радиус
+    const cs = this.cellSize;
+    const x0 = Math.floor((body.x.x - r) / cs);
+    const x1 = Math.floor((body.x.x + r) / cs);
+    const y0 = Math.floor((body.x.y - r) / cs);
+    const y1 = Math.floor((body.x.y + r) / cs);
+    const z0 = Math.floor((body.x.z - r) / cs);
+    const z1 = Math.floor((body.x.z + r) / cs);
+    for (let ix = x0; ix <= x1; ix++)
+    for (let iy = y0; iy <= y1; iy++)
+    for (let iz = z0; iz <= z1; iz++) {
+      const k = this._key(ix, iy, iz);
+      if (!this.cells.has(k)) this.cells.set(k, []);
+      this.cells.get(k).push(idx);
+    }
+  }
+
+  // Возвращает пары (i, j) i < j которые находятся в одной ячейке
+  getBroadPhasePairs() {
+    const pairs = new Set();
+    for (const list of this.cells.values()) {
+      for (let a = 0; a < list.length; a++)
+      for (let b = a + 1; b < list.length; b++) {
+        const i = Math.min(list[a], list[b]);
+        const j = Math.max(list[a], list[b]);
+        pairs.add(`${i},${j}`);
+      }
+    }
+    return [...pairs].map(s => s.split(',').map(Number));
+  }
+}
+
+// ---- Part3View — базовый класс для сцен Части 3 ----
+
+class Part3View {
+  constructor(name, description, numBodies, useSpatialGrid) {
+    this.name = name;
+    this.description = description;
+    this.useSpatialGrid = useSpatialGrid;
+    this.tab = 3;
+
+    this.scene = new THREE.Scene();
+    this.scene.background = null;
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.5);
+    dir.position.set(5, 8, 3);
+    this.scene.add(dir);
+
+    // Арена
+    const arenaW = useSpatialGrid ? 12 : 6;
+    const arenaH = 8;
+    this.arenaW = arenaW;
+    this.arenaH = arenaH;
+
+    // Пол и стены как визуальные сетки
+    const grid = new THREE.GridHelper(arenaW, arenaW, 0x555555, 0x333333);
+    grid.position.y = 0;
+    this.scene.add(grid);
+
+    // Плоскости арены: пол y=0, стены x=±arenaW/2, z=±arenaW/2
+    this.planes = [
+      { n: new THREE.Vector3(0,  1, 0), d: 0          },  // пол
+      { n: new THREE.Vector3(0, -1, 0), d: -arenaH      },  // потолок (не нужен, убираем — пусть улетают вверх)
+      { n: new THREE.Vector3( 1, 0, 0), d: -arenaW / 2 },  // стена -x
+      { n: new THREE.Vector3(-1, 0, 0), d: -arenaW / 2 },  // стена +x
+      { n: new THREE.Vector3(0, 0,  1), d: -arenaW / 2 },  // стена -z
+      { n: new THREE.Vector3(0, 0, -1), d: -arenaW / 2 },  // стена +z
+    ];
+    this.planes = [this.planes[0], this.planes[2], this.planes[3], this.planes[4], this.planes[5]];
+
+    this.bodies = [];
+    this.meshes = [];
+    this.numBodies = numBodies;
+
+    if (useSpatialGrid) {
+      this.spatialGrid = new SpatialGrid(1.0);
+    }
+
+    this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+    this.camera.position.set(0, 6, useSpatialGrid ? 18 : 8);
+    this.camera.lookAt(0, 2, 0);
+
+    this.label = document.createElement('div');
+    this.label.className = 'vp-label';
+    overlaysHost.appendChild(this.label);
+
+    this._frameCount = 0;
+    this._contactCount = 0;
+  }
+
+  spawnBodies() {
+    for (const m of this.meshes) { this.scene.remove(m); m.geometry.dispose(); }
+    this.meshes = [];
+    this.bodies = [];
+
+    const colors = [0x4a9eff, 0x4ade80, 0xfbbf24, 0xf87171, 0xa78bfa,
+                    0xff9966, 0x60a5fa, 0x34d399, 0xfcd34d, 0xf9a8d4];
+
+    const isGrid = this.useSpatialGrid;
+    const bodySize = isGrid ? 0.35 : 0.45; // фиксированный размер для простоты
+
+    for (let i = 0; i < this.numBodies; i++) {
+      const s = isGrid ? bodySize : bodySize + (Math.random() - 0.5) * 0.2;
+      const size = new THREE.Vector3(s, s, s);
+
+      const body = new RigidBody(1.0, size);
+      body.useDamping = true;
+
+      if (isGrid) {
+        const cols = Math.ceil(Math.sqrt(this.numBodies));
+        const spacing = this.arenaW / cols;
+        const col = i % cols;
+        const row = Math.floor(i / cols) % cols;
+        const layer = Math.floor(i / (cols * cols));
+        body.x.set(
+          -this.arenaW/2 + spacing*(col+0.5) + (Math.random()-0.5)*spacing*0.3,
+          bodySize*0.6 + layer * bodySize * 1.2,
+          -this.arenaW/2 + spacing*(row+0.5) + (Math.random()-0.5)*spacing*0.3
+        );
+      } else {
+        // Тела падают сверху, случайно по всей арене
+        const hw = this.arenaW * 0.4;
+        body.x.set(
+          (Math.random() - 0.5) * hw * 2,
+          1.0 + Math.floor(i / 3) * 0.8 + Math.random() * 0.3,
+          (Math.random() - 0.5) * hw * 2
+        );
+      }
+
+      // Небольшая случайная ориентация
+      const angle = (Math.random() - 0.5) * 0.3;
+      body.q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+      body.v.set(0, 0, 0);
+      body.omega.set(0, 0, 0);
+
+      this.bodies.push(body);
+
+      const geom = new THREE.BoxGeometry(size.x, size.y, size.z);
+      const mat = new THREE.MeshStandardMaterial({ color: colors[i % colors.length], roughness: 0.6 });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(geom),
+        new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.5 })
+      ));
+      this.scene.add(mesh);
+      this.meshes.push(mesh);
+    }
+  }
+
+  reset() {
+    this.spawnBodies();
+    this._frameCount = 0;
+    this._contactCount = 0;
+  }
+
+  // Интеграция скоростей + внешние силы для всех тел
+  predictAll(dt) {
+    const g = new THREE.Vector3(0, -globalParams.gravity, 0);
+    for (const b of this.bodies) predictVelocity(b, dt, null, g);
+  }
+
+  // Интеграция позиций для всех тел
+  integrateAll(dt) {
+    for (const b of this.bodies) integratePositions(b, dt);
+  }
+
+  // Детектор коллизий: тела + арена
+  getContacts() {
+    const contacts = [];
+
+    // Broadphase
+    let pairs;
+    if (this.useSpatialGrid) {
+      this.spatialGrid.clear();
+      this.bodies.forEach((b, i) => this.spatialGrid.insert(b, i));
+      pairs = this.spatialGrid.getBroadPhasePairs();
+    } else {
+      // Brute force для малого числа тел
+      pairs = [];
+      for (let i = 0; i < this.bodies.length; i++)
+        for (let j = i + 1; j < this.bodies.length; j++)
+          pairs.push([i, j]);
+    }
+
+    // Narrowphase
+    for (const [i, j] of pairs) {
+      const A = this.bodies[i], B = this.bodies[j];
+      const vertsA = getWorldVertices(A);
+      for (const v of vertsA) {
+        const c = testVertexInBox(v, B);
+        if (c) contacts.push({ bodyA: A, bodyB: B, point: c.point, normal: c.normal, depth: c.depth, lambda: 0 });
+      }
+      const vertsB = getWorldVertices(B);
+      for (const v of vertsB) {
+        const c = testVertexInBox(v, A);
+        if (c) contacts.push({ bodyA: B, bodyB: A, point: c.point, normal: c.normal.clone().negate(), depth: c.depth, lambda: 0 });
+      }
+    }
+
+    // Тела vs арена
+    for (const b of this.bodies) {
+      for (const { n, d } of this.planes) {
+        const cs = detectBodyVsPlane(b, n, d);
+        for (const c of cs) {
+          contacts.push({ ...c, lambda: 0 });
+        }
+      }
+    }
+
+    return contacts;
+  }
+
+  // ---- Солверы — переопределяются в наследниках ----
+  solveContacts(contacts, dt) {}
+
+  step(dt) {
+    const g = new THREE.Vector3(0, -globalParams.gravity, 0);
+
+    // 1. Integrate velocities (symplectic Euler: v first)
+    for (const b of this.bodies) {
+      if (b.mass === 0) continue;
+      b.v.addScaledVector(g, dt);
+      if (b.useDamping) {
+        b.v.multiplyScalar(Math.exp(-globalParams.linDamp * dt));
+        b.omega.multiplyScalar(Math.exp(-globalParams.angDamp * dt));
+      }
+    }
+
+    // 2. Detect contacts
+    const contacts = this.getContacts();
+    this._contactCount = contacts.length;
+
+    // 3. Solve contacts (velocity level)
+    this.solveContacts(contacts, dt);
+
+    // 4. Integrate positions
+    for (const b of this.bodies) {
+      if (b.mass === 0) continue;
+      b.x.addScaledVector(b.v, dt);
+      integrateQuat(b.q, b.omega, dt);
+    }
+  }
+
+  updateMesh() {
+    for (let i = 0; i < this.bodies.length; i++) {
+      const b = this.bodies[i];
+      const m = this.meshes[i];
+      m.position.copy(b.x);
+      m.quaternion.copy(b.q);
+    }
+  }
+
+  updateLabel() {
+    this._frameCount++;
+    this.label.innerHTML = `
+      <div class="title">${this.name}</div>
+      тел: ${this.bodies.length} &nbsp; контактов: ${this._contactCount}<br>
+      <span class="note">${this.description}</span>
+    `;
+  }
+}
+
+// ---- 3A — XPBD ----
+// По Müller 2020: position-level solve + derive velocities.
+// Используем substepping внутри шага.
+class Part3View_XPBD extends Part3View {
+  solveContacts(contacts, dt) {
+    // XPBD: position solve
+    const alpha = globalParams.col3Alpha;
+    const alphaTilde = alpha > 0 ? alpha / (dt * dt) : 0;
+
+    // Сохраняем позиции ДО solve для derive
+    const prevX = this.bodies.map(b => b.x.clone());
+    const prevQ = this.bodies.map(b => b.q.clone());
+
+    // Сначала интегрируем позиции (predict уже сделан в step)
+    for (const b of this.bodies) {
+      if (b.mass === 0) continue;
+      b.x.addScaledVector(b.v, dt);
+      integrateQuat(b.q, b.omega, dt);
+    }
+
+    // Position solve iterations
+    const NUM_ITER = globalParams.col3PosIters;
+    for (let iter = 0; iter < NUM_ITER; iter++) {
+      for (const c of contacts) {
+        // Пересчитываем контакт с текущими позициями
+        const fresh = this._freshContact(c);
+        if (!fresh || fresh.depth <= 0) continue;
+        const w = contactGeneralizedW(fresh);
+        if (w < 1e-10) continue;
+        const dL = (fresh.depth - alphaTilde * (c.lambda || 0)) / (w + alphaTilde);
+        if (dL <= 0) continue;
+        c.lambda = (c.lambda || 0) + dL;
+        applyContactImpulsePosition(fresh, dL);
+      }
+    }
+
+    // Derive velocities: v = (x_new - x_prev) / dt
+    for (let i = 0; i < this.bodies.length; i++) {
+      const b = this.bodies[i];
+      b.v.copy(b.x).sub(prevX[i]).multiplyScalar(1 / dt);
+      const dq = b.q.clone().multiply(prevQ[i].clone().invert());
+      b.omega.set(2*dq.x/dt, 2*dq.y/dt, 2*dq.z/dt);
+      if (dq.w < 0) b.omega.multiplyScalar(-1);
+      if (b.v.length() > 20) b.v.setLength(20);
+      if (b.omega.length() > 30) b.omega.setLength(30);
+    }
+  }
+
+  step(dt) {
+    const g = new THREE.Vector3(0, -globalParams.gravity, 0);
+    for (const b of this.bodies) {
+      if (b.mass === 0) continue;
+      b.v.addScaledVector(g, dt);
+      if (b.useDamping) {
+        b.v.multiplyScalar(Math.exp(-globalParams.linDamp * dt));
+        b.omega.multiplyScalar(Math.exp(-globalParams.angDamp * dt));
+      }
+    }
+    const contacts = this.getContacts();
+    this._contactCount = contacts.length;
+    for (const c of contacts) c.lambda = 0;
+    this.solveContacts(contacts, dt);
+  }
+
+  // Возвращает контакт с актуальными позициями тел
+  _freshContact(c) {
+    if (!c.bodyB) {
+      // плоскость
+      return detectBodyVsPlane(c.bodyA, c.normal.clone(), c._planeD)?.[0] || null;
+    }
+    const res = satOBB(c.bodyA, c.bodyB);
+    return res ? { bodyA: c.bodyA, bodyB: c.bodyB, ...res } : null;
+  }
+}
+
+// ---- 3B — Sequential Impulses + Baumgarte ----
+class Part3View_SI extends Part3View {
+  solveContacts(contacts, dt) {
+    const beta  = globalParams.baumgarte;
+    const e     = globalParams.restitution;
+    const ITERS = globalParams.col3VelIters;
+
+    // Warmstart
+    for (const c of contacts) {
+      if ((c.lambda || 0) > 0) applyContactImpulseVelocity(c, c.lambda);
+    }
+
+    for (let iter = 0; iter < ITERS; iter++) {
+      for (const c of contacts) {
+        const w = contactGeneralizedW(c);
+        if (w < 1e-10) continue;
+        const vN = contactRelativeVelocity(c);
+        // Baumgarte positional correction: если тела проникают, добавляем bias
+        const bias = Math.min(beta * c.depth / dt, 2.0);
+        // Restitution: при ударе добавляем e*vN_before
+        const vBias = bias + (iter === 0 ? Math.max(0, -e * vN) : 0);
+        const dL = (-vN + vBias) / w;
+        const prevL = c.lambda || 0;
+        c.lambda = Math.max(0, prevL + dL);
+        const actual = c.lambda - prevL;
+        if (actual > 1e-12) applyContactImpulseVelocity(c, actual);
+      }
+    }
+  }
+}
+
+// ---- 3C — XPBD + Spatial Grid (много тел) ----
+class Part3View_Grid extends Part3View_XPBD {
+  // Наследует XPBD solver, добавляет Spatial Grid broadphase
+  // (уже в базовом Part3View через useSpatialGrid флаг)
+}
+
+
+const globalParams = {
+  gravity:  9.81,
+  springK:  50,
+  springC:  1.0,
+  softHz:   3.0,
+  softZeta: 0.7,
+  // Part 2B
+  distCompliance: 0.0,
+  baumgarte:      0.2,
+  siIters:        4,
+  posIters:       2,
+  linDamp:        0.5,
+  angDamp:        0.5,
+  // Part 3
+  restitution:    0.2,
+  col3Alpha:      0.0,
+  col3PosIters:   2,
+  col3VelIters:   4,
+};
+
+// =========================================================================
+//  Регистрация сцен
+// =========================================================================
+
+const partViews = {
+  1: [
+    new Part1View('(a) Global frame',  'L = const в межкадре, ω = I⁻¹(t)·L. Должно сохраняться лучше всех.', stepGlobalConstL,       0x6b9aff),
+    new Part1View('(b) Body — без гироскопики', 'ω̇_body = 0. Неверно: L уплывает быстро.',                     stepBodyNoGyro,          0xff9966),
+    new Part1View('(c) Body — explicit gyro',   'Явный Эйлер с −ω×Iω. Эффект Джанибекова, E растёт.',          stepBodyExplicitGyro,    0xffcc44),
+    new Part1View('(d) Body — implicit gyro',   'Неявный Эйлер, Ньютон 3 итерации. Эффект Джанибекова, E падает.', stepBodyImplicitGyro, 0x4ade80),
+  ],
+  2: {
+    'spring': [
+      new Part2SpringView('Spring (external force)',
+                          'F = -k(x_a - anchor) - c·v_a, применённое как внешняя сила и момент.',
+                          'force', 0x6b9aff),
+      new Part2SpringView('Spring (soft constraint, XPBD)',
+                          'XPBD позиционная коррекция: Δλ = (-c - α̃·λ)/(w + α̃), compliance из Hz.',
+                          'soft',  0xa78bfa),
+    ],
+    'dist': [
+      new Part2DistView_XPBD       ('(a) XPBD',           'Position-level: Δλ = (-c - α̃·λ)/(w + α̃). α̃ = compliance/dt².', 0x4ade80),
+      new Part2DistView_SI_Baumgarte('(b) SI + Baumgarte', 'Velocity-level PGS: Δλ = (-vN - β·c/dt)/w. Энергия может расти.', 0x6b9aff),
+      new Part2DistView_SI_NGS     ('(c) SI + NGS',        'Velocity solve без bias, потом отдельный position solve.', 0xfbbf24),
+      new Part2DistView_SI_Soft    ('(d) SI + Soft',       'Soft (Catto): Δλ = -massCoeff·meff·(vN+biasRate·c) - impulseCoeff·λ.', 0xa78bfa),
+    ]
+  },
+  3: {
+    'xpbd':  [ new Part3View_XPBD('(3A) XPBD коллизии', 'Position-level: XPBD contact constraint. α = compliance.', 10, false) ],
+    'si':    [ new Part3View_SI  ('(3B) SI коллизии',   'Velocity-level PGS + Baumgarte stabilization.', 10, false) ],
+    'grid':  [ new Part3View_Grid('(3C) Spatial Grid',  '~200 тел, broadphase через Spatial Hash Grid.', 200, true) ],
+  }
+};
+
+// =========================================================================
+//  Tabs management
+// =========================================================================
+
+const subtabsHost = document.getElementById('subtabs');
+let currentTab = 1;
+let currentSubtab = null;
+let activeViews = [];
+
+function buildSubtabs(tab) {
+  subtabsHost.innerHTML = '';
+  if (tab === 2) {
+    subtabsHost.style.display = 'flex';
+    [['spring','2A · Spring'], ['dist','2B · Distance constraint']].forEach(([sub, label]) => {
+      const el = document.createElement('div');
+      el.className = 'subtab' + (currentSubtab === sub ? ' active' : '');
+      el.textContent = label;
+      el.dataset.sub = sub;
+      subtabsHost.appendChild(el);
+    });
+    if (currentSubtab !== 'spring' && currentSubtab !== 'dist') currentSubtab = 'spring';
+  } else if (tab === 3) {
+    subtabsHost.style.display = 'flex';
+    [['xpbd','3A · XPBD'], ['si','3B · SI'], ['grid','3C · Spatial Grid']].forEach(([sub, label]) => {
+      const el = document.createElement('div');
+      el.className = 'subtab' + (currentSubtab === sub ? ' active' : '');
+      el.textContent = label;
+      el.dataset.sub = sub;
+      subtabsHost.appendChild(el);
+    });
+    if (!['xpbd','si','grid'].includes(currentSubtab)) currentSubtab = 'xpbd';
+  } else {
+    subtabsHost.style.display = 'none';
+    currentSubtab = null;
+  }
+  subtabsHost.querySelectorAll('.subtab').forEach(s => {
+    s.addEventListener('click', () => {
+      subtabsHost.querySelectorAll('.subtab').forEach(x => x.classList.remove('active'));
+      s.classList.add('active');
+      currentSubtab = s.dataset.sub;
+      updateControlVisibility();
+      activateViews();
+    });
+  });
+}
+
+function updateControlVisibility() {
+  const isSpring = currentTab === 2 && currentSubtab === 'spring';
+  const isDist   = currentTab === 2 && currentSubtab === 'dist';
+  const isPart3  = currentTab === 3;
+  document.getElementById('ctrl-part2-spring').classList.toggle('hidden', !isSpring);
+  document.getElementById('ctrl-part2-dist').classList.toggle('hidden', !isDist);
+  document.getElementById('ctrl-part3').classList.toggle('hidden', !isPart3);
+}
+
+function activateViews() {
+  document.querySelectorAll('.vp-label').forEach(l => l.style.display = 'none');
+
+  if (currentTab === 1) {
+    activeViews = partViews[1];
+  } else if (currentTab === 2) {
+    activeViews = partViews[2][currentSubtab];
+  } else if (currentTab === 3) {
+    activeViews = partViews[3][currentSubtab];
+    // Part 3 лучше работает с большим числом substeps
+    if (substeps < 8) {
+      substeps = 8;
+      document.getElementById('sl-sub').value = 8;
+      document.getElementById('v-sub').textContent = '8';
+    }
+  } else {
+    activeViews = [];
+  }
+
+  activeViews.forEach(v => v.label.style.display = '');
+
+  document.getElementById('ctrl-part1').classList.toggle('hidden', currentTab !== 1);
+  updateControlVisibility();
+  document.getElementById('legend-part1').classList.toggle('hidden', currentTab !== 1);
+  document.getElementById('legend-part2').classList.toggle('hidden', currentTab !== 2);
+
+  resetAll();
+  layout();
+}
+
+function switchTab(tab) {
+  if (tab === currentTab) return;
+  currentTab = tab;
+  document.querySelectorAll('#tabs .tab').forEach(t => {
+    t.classList.toggle('active', parseInt(t.dataset.tab) === tab);
+  });
+  buildSubtabs(tab);
+  activateViews();
+}
+
+// =========================================================================
+//  Camera / OrbitControls
+// =========================================================================
+
+const orbit = new OrbitControls(new THREE.PerspectiveCamera(), canvas);
+orbit.enableDamping = true;
+orbit.dampingFactor = 0.08;
+orbit.target.set(0, 0, 0);
+
+function syncCameras() {
+  if (activeViews.length === 0) return;
+  const master = activeViews[0].camera;
+  master.position.copy(orbit.object.position);
+  master.quaternion.copy(orbit.object.quaternion);
+  master.zoom = orbit.object.zoom;
+  master.updateProjectionMatrix();
+  for (let i = 1; i < activeViews.length; i++) {
+    activeViews[i].camera.position.copy(master.position);
+    activeViews[i].camera.quaternion.copy(master.quaternion);
+    activeViews[i].camera.zoom = master.zoom;
+    activeViews[i].camera.updateProjectionMatrix();
+  }
+}
+
+function bindOrbitTo(camera) {
+  orbit.object = camera;
+  orbit.update();
+}
+
+// =========================================================================
+//  Layout
+// =========================================================================
+
+function layout() {
+  const host = document.getElementById('scene-host');
+  const w = host.clientWidth, h = host.clientHeight;
+  renderer.setSize(w, h, false);
+
+  const n = activeViews.length;
+  if (n === 0) return;
+
+  let cols, rows;
+  if (n === 1) { cols = 1; rows = 1; }
+  else if (n === 2) { cols = 2; rows = 1; }
+  else if (n <= 4)  { cols = 2; rows = 2; }
+  else { cols = 3; rows = Math.ceil(n / 3); }
+
+  const cw = w / cols, ch = h / rows;
+  activeViews.forEach((v, i) => {
+    const col = i % cols, row = Math.floor(i / cols);
+    v._vp = { x: col * cw, y: h - (row + 1) * ch, w: cw, h: ch };
+    v.camera.aspect = cw / ch;
+    v.camera.updateProjectionMatrix();
+    v.label.style.left = (col * cw + 8) + 'px';
+    v.label.style.top  = (row * ch + 8) + 'px';
+  });
+
+  bindOrbitTo(activeViews[0].camera);
+}
+
+window.addEventListener('resize', layout);
+
+// =========================================================================
+//  Reset / sliders / buttons
+// =========================================================================
+
+function resetAll() {
+  if (currentTab === 1) {
+    const pert = parseFloat(document.getElementById('sl-pert').value);
+    const omega0 = new THREE.Vector3(pert, 3.0, pert * 0.7);
+    const q0 = new THREE.Quaternion();
+    activeViews.forEach(v => v.applyInitial(q0, omega0));
+  } else if (currentTab === 2) {
+    activeViews.forEach(v => v.reset());
+  } else if (currentTab === 3) {
+    activeViews.forEach(v => v.reset());
+  }
+}
+
+function bindSlider(id, vid, setter, fmt) {
+  const el = document.getElementById(id);
+  const vel = document.getElementById(vid);
+  const update = () => {
+    const x = parseFloat(el.value);
+    setter(x);
+    vel.textContent = fmt(x);
+  };
+  el.addEventListener('input', update);
+  update();
+}
+
+let dt = 0.002, substeps = 4;
+let paused = false, stepOnce = false;
+
+bindSlider('sl-dt',   'v-dt',   v => dt = v,                    v => v.toFixed(4));
+bindSlider('sl-sub',  'v-sub',  v => substeps = parseInt(v),    v => String(parseInt(v)));
+bindSlider('sl-pert', 'v-pert', () => {},                       v => v.toFixed(3));
+bindSlider('sl-g',    'v-g',    v => globalParams.gravity  = v, v => v.toFixed(2));
+bindSlider('sl-k',    'v-k',    v => globalParams.springK  = v, v => v.toFixed(0));
+bindSlider('sl-c',    'v-c',    v => globalParams.springC  = v, v => v.toFixed(2));
+bindSlider('sl-hz',   'v-hz',   v => globalParams.softHz   = v, v => v.toFixed(1));
+bindSlider('sl-zeta', 'v-zeta', v => globalParams.softZeta = v, v => v.toFixed(2));
+// Part 2B
+bindSlider('sl-g2',    'v-g2',    v => globalParams.gravity        = v, v => v.toFixed(2));
+bindSlider('sl-alpha', 'v-alpha', v => globalParams.distCompliance = v, v => v.toFixed(4));
+bindSlider('sl-beta',  'v-beta',  v => globalParams.baumgarte      = v, v => v.toFixed(2));
+bindSlider('sl-hz2',   'v-hz2',   v => globalParams.softHz         = v, v => v.toFixed(1));
+bindSlider('sl-zeta2', 'v-zeta2', v => globalParams.softZeta       = v, v => v.toFixed(2));
+bindSlider('sl-vi',    'v-vi',    v => globalParams.siIters        = parseInt(v), v => String(parseInt(v)));
+bindSlider('sl-pi',    'v-pi',    v => globalParams.posIters       = parseInt(v), v => String(parseInt(v)));
+bindSlider('sl-ld',    'v-ld',    v => globalParams.linDamp        = v,           v => v.toFixed(1));
+bindSlider('sl-ad',    'v-ad',    v => globalParams.angDamp        = v,           v => v.toFixed(1));
+// Part 3
+bindSlider('sl-rest',  'v-rest',  v => globalParams.restitution    = v,           v => v.toFixed(2));
+bindSlider('sl-c3a',   'v-c3a',   v => globalParams.col3Alpha      = v,           v => v.toFixed(4));
+bindSlider('sl-c3b',   'v-c3b',   v => globalParams.baumgarte      = v,           v => v.toFixed(2));
+bindSlider('sl-c3pi',  'v-c3pi',  v => globalParams.col3PosIters   = parseInt(v), v => String(parseInt(v)));
+bindSlider('sl-c3vi',  'v-c3vi',  v => globalParams.col3VelIters   = parseInt(v), v => String(parseInt(v)));
+
+document.getElementById('btn-pause').addEventListener('click', e => {
+  paused = !paused;
+  e.target.textContent = paused ? '▶ Старт' : '⏸ Пауза';
+});
+document.getElementById('btn-reset').addEventListener('click', resetAll);
+document.getElementById('btn-step').addEventListener('click', () => {
+  paused = true;
+  document.getElementById('btn-pause').textContent = '▶ Старт';
+  stepOnce = true;
+});
+
+document.querySelectorAll('#tabs .tab').forEach(t => {
+  t.addEventListener('click', () => {
+    if (t.classList.contains('disabled')) return;
+    switchTab(parseInt(t.dataset.tab));
+  });
+});
+
+// =========================================================================
+//  Animation loop
+// =========================================================================
+
+function animate() {
+  requestAnimationFrame(animate);
+  orbit.update();
+  syncCameras();
+
+  if (!paused || stepOnce) {
+    for (let s = 0; s < substeps; s++) {
+      activeViews.forEach(v => v.step(dt));
+    }
+    stepOnce = false;
+  }
+  activeViews.forEach(v => { v.updateMesh(); v.updateLabel(); });
+
+  renderer.clear();
+  activeViews.forEach(v => {
+    const vp = v._vp;
+    if (!vp) return;
+    renderer.setViewport(vp.x, vp.y, vp.w, vp.h);
+    renderer.setScissor(vp.x, vp.y, vp.w, vp.h);
+    renderer.render(v.scene, v.camera);
+  });
+}
+
+// =========================================================================
+//  Start
+// =========================================================================
+
+buildSubtabs(1);
+activateViews();
+animate();
+
+</script>
+</body>
+</html>
